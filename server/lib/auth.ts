@@ -11,6 +11,7 @@ export const auth = betterAuth({
   trustedOrigins: [env.APP_BASE_URL, env.API_BASE_URL],
   database: prismaAdapter(prisma, {
     provider: 'mongodb',
+    transaction: false,
   }),
   socialProviders: {
     google: {

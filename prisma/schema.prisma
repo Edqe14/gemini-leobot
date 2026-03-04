@@ -8,7 +8,7 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  id            String    @id @default(cuid()) @map("_id")
   email         String    @unique
   name          String?
   image         String?
@@ -22,12 +22,12 @@ model User {
 }
 
 model Session {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  id        String   @id @default(cuid()) @map("_id")
   token     String   @unique
   expiresAt DateTime
   ipAddress String?
   userAgent String?
-  userId    String   @db.ObjectId
+  userId    String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -35,10 +35,10 @@ model Session {
 }
 
 model Account {
-  id                    String    @id @default(auto()) @map("_id") @db.ObjectId
+  id                    String    @id @default(cuid()) @map("_id")
   accountId             String
   providerId            String
-  userId                String    @db.ObjectId
+  userId                String
   accessToken           String?
   refreshToken          String?
   accessTokenExpiresAt  DateTime?
@@ -55,7 +55,7 @@ model Account {
 }
 
 model Verification {
-  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  id         String   @id @default(cuid()) @map("_id")
   identifier String
   value      String
   expiresAt  DateTime
@@ -67,7 +67,7 @@ model Verification {
 
 model Project {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId      String   @db.ObjectId
+  userId      String
   name        String
   description String?
   createdAt   DateTime @default(now())
