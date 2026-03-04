@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 
 const rootElement = document.getElementById('root');
@@ -22,7 +23,9 @@ void import('./App.tsx')
   .then(({ default: App }) => {
     createRoot(rootElement).render(
       <StrictMode>
-        <App />
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
       </StrictMode>,
     );
   })

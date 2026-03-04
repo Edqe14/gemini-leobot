@@ -36,7 +36,36 @@ cp .env.example .env
 - MongoDB `DATABASE_URL`
 - Better Auth `BETTER_AUTH_SECRET`
 - Google OAuth credentials
-- Gemini API key
+- Gemini provider (`GEMINI_PROVIDER`) and matching credentials
+
+### Gemini provider setup
+
+This project uses `@google/genai` (Google GenAI SDK) and supports both SDK-style switching and project-style switching.
+
+Set either:
+
+- `GEMINI_PROVIDER` to one of:
+  - `ai_studio`: uses `GEMINI_API_KEY`
+  - `vertex`: uses Vertex AI with ADC (`GOOGLE_CLOUD_PROJECT` + `GOOGLE_CLOUD_LOCATION`)
+- or `GOOGLE_GENAI_USE_VERTEXAI=True|False` (Google quickstart style)
+
+If both are set, `GEMINI_PROVIDER` takes precedence and must not conflict with `GOOGLE_GENAI_USE_VERTEXAI`.
+
+For Vertex AI local development, authenticate with ADC using one of:
+
+- `gcloud auth application-default login`
+- `GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json`
+
+The server validates provider-specific env vars at startup.
+
+### Debug monitoring
+
+Enable realtime debug monitoring with:
+
+- `DEBUG_MONITOR_ENABLED=true`
+- `DEBUG_MONITOR_MAX_EVENTS=2000` (bounded in-memory event history)
+
+When enabled, the server tracks websocket session lifecycle, active tool/agent calls, action send/receive events, Gemini errors, and generated response text snippets.
 
 4. Generate Prisma client and push schema:
 
@@ -69,6 +98,8 @@ Create OAuth credentials in Google Cloud Console and set:
 - `POST /api/projects`
 - `GET /api/projects/:projectId`
 - `POST /api/projects/:projectId/story/import`
+- `GET /api/debug/monitor`
+- `GET /api/debug/monitor/events?limit=100`
 - `WS /ws`
 
 ## WebSocket Message Shapes (MVP)
