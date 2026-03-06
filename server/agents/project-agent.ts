@@ -9,6 +9,7 @@ import {
   listCharacterNodesTool,
   refineProjectStyleNodeTool,
   generateStoryboardTool,
+  updateStoryboardTool,
   listProjectsTool,
   syncStoryNodeTool,
   updateCharacterBriefTool,
@@ -410,25 +411,88 @@ export const ProjectAgent: AgentDefinition = {
     {
       name: 'generate_storyboard',
       description:
-        'Create a storyboard node for the active project with title and optional shot array.',
+        'Generate or refresh storyboard frames for the active project. Reuses the latest storyboard node by default and creates one only when missing.',
       parameters: {
         type: Type.OBJECT,
         properties: {
+          storyboardNodeId: {
+            type: Type.STRING,
+            description:
+              'Optional target storyboard node ID. If omitted, the latest storyboard node is updated.',
+          },
           title: {
             type: Type.STRING,
             description: 'Storyboard title.',
           },
+          frameCount: {
+            type: Type.NUMBER,
+            description:
+              'Optional target frame count (1-24). If omitted, AI chooses based on pacing.',
+          },
+          autoGenerate: {
+            type: Type.BOOLEAN,
+            description:
+              'Optional. If true (default), generate detailed storyboard frames with AI.',
+          },
           shots: {
             type: Type.ARRAY,
             description:
-              'Optional shot list to store in the storyboard node. Each item should be a JSON object.',
+              'Optional prebuilt shot list. Use when providing explicit manual frames.',
             items: {
               type: Type.OBJECT,
             },
           },
+          createIfMissing: {
+            type: Type.BOOLEAN,
+            description:
+              'Optional. If true (default), create a storyboard node when none exists.',
+          },
         },
       },
       handler: generateStoryboardTool,
+    },
+    {
+      name: 'update_storyboard',
+      description:
+        'Update an existing storyboard node with regenerated frames and images. Does not create a new storyboard unless createIfMissing is explicitly true.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          storyboardNodeId: {
+            type: Type.STRING,
+            description:
+              'Optional exact storyboard node ID to update. If omitted, updates the latest storyboard node.',
+          },
+          title: {
+            type: Type.STRING,
+            description: 'Optional storyboard title update.',
+          },
+          frameCount: {
+            type: Type.NUMBER,
+            description:
+              'Optional target frame count (1-24). If omitted, AI chooses based on pacing.',
+          },
+          autoGenerate: {
+            type: Type.BOOLEAN,
+            description:
+              'Optional. If true (default), regenerate detailed storyboard frames with AI.',
+          },
+          shots: {
+            type: Type.ARRAY,
+            description:
+              'Optional manual shot list to apply before/without regeneration.',
+            items: {
+              type: Type.OBJECT,
+            },
+          },
+          createIfMissing: {
+            type: Type.BOOLEAN,
+            description:
+              'Optional safety override. Default false for update flow.',
+          },
+        },
+      },
+      handler: updateStoryboardTool,
     },
   ],
   toolInstructions: [
@@ -449,6 +513,9 @@ export const ProjectAgent: AgentDefinition = {
     'For direct field-level edits (for example: only set writingStyle/artStyle text exactly), call upsert_project_style_node.',
     'For natural-language style generation or refinement requests, call refine_project_style_node so professional multi-discipline style synthesis runs across the whole project scope.',
     'After style updates, summarize what changed in writingStyle, characterStyle, artStyle, and storytellingPacing.',
+    'Before generate_storyboard or update_storyboard, ensure story content exists (sync_story_node when needed) so frame generation has source narrative context.',
+    'When the user asks to revise an existing storyboard, call update_storyboard (not generate_storyboard) so the current storyboard node is updated in place.',
+    'Storyboard generation should use project style direction and character design context to produce detailed, actionable frame descriptions.',
   ],
   capabilities: [
     '1. Create story nodes and prepare project story workspace.',

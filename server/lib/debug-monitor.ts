@@ -67,6 +67,8 @@ type SessionUpdateInput = {
 };
 
 const MAX_SNIPPET_LENGTH = 280;
+const MAX_DEBUG_IMAGE_ATTACHMENTS = 6;
+const MAX_DEBUG_IMAGE_BASE64_CHARS = 400_000;
 
 const IMPORTANT_EVENT_TYPES = new Set<MonitorEventType>([
   'session.open',
@@ -279,6 +281,78 @@ function extractMessageTextParts(message: unknown): string[] {
   return textParts;
 }
 
+type DebugImageAttachment = {
+  kind: 'image-inline';
+  mimeType: string;
+  dataUrl: string;
+  bytesApprox: number;
+};
+
+function extractMessageImageAttachments(message: unknown) {
+  const attachments: DebugImageAttachment[] = [];
+  const visited = new Set<unknown>();
+
+  function walk(input: unknown) {
+    if (attachments.length >= MAX_DEBUG_IMAGE_ATTACHMENTS) {
+      return;
+    }
+
+    if (input === null || input === undefined) {
+      return;
+    }
+
+    if (typeof input !== 'object') {
+      return;
+    }
+
+    if (visited.has(input)) {
+      return;
+    }
+
+    visited.add(input);
+
+    if (Array.isArray(input)) {
+      input.forEach(walk);
+      return;
+    }
+
+    const record = input as Record<string, unknown>;
+    const inlineData =
+      record.inlineData && typeof record.inlineData === 'object'
+        ? (record.inlineData as Record<string, unknown>)
+        : null;
+
+    if (inlineData) {
+      const mimeType =
+        typeof inlineData.mimeType === 'string'
+          ? inlineData.mimeType.trim()
+          : '';
+      const data =
+        typeof inlineData.data === 'string' ? inlineData.data.trim() : '';
+
+      if (
+        mimeType.startsWith('image/') &&
+        data &&
+        data.length <= MAX_DEBUG_IMAGE_BASE64_CHARS
+      ) {
+        attachments.push({
+          kind: 'image-inline',
+          mimeType,
+          dataUrl: `data:${mimeType};base64,${data}`,
+          bytesApprox: Math.floor((data.length * 3) / 4),
+        });
+      }
+    }
+
+    for (const value of Object.values(record)) {
+      walk(value);
+    }
+  }
+
+  walk(message);
+  return attachments;
+}
+
 export function createDebugSession(input: SessionInput) {
   const sessionId = randomId('ws');
 
@@ -411,6 +485,8 @@ export function recordGeminiMessage(
   session.geminiMessages += 1;
   touchSession(session);
 
+  const imageAttachments = extractMessageImageAttachments(message);
+
   pushEvent({
     type: 'gemini.message',
     sessionId,
@@ -419,6 +495,7 @@ export function recordGeminiMessage(
     detail: {
       direction,
       message: summarizeUnknown(message),
+      ...(imageAttachments.length ? { attachments: imageAttachments } : {}),
     },
   });
 

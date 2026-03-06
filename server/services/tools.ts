@@ -1,5 +1,5 @@
 import { GoogleGenAI, type GoogleGenAIOptions } from '@google/genai';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { prisma } from '../lib/db';
@@ -72,6 +72,47 @@ type ProjectStylePayload = {
   artStyle: string;
   storytellingPacing: string;
   extras: Record<string, string>;
+};
+
+type StoryboardFrameCharacter = {
+  characterName: string;
+  action: string;
+  designCue: string;
+};
+
+type StoryboardFrame = {
+  frameNumber: number;
+  description: string;
+  cameraAngle: string;
+  cameraMovement: string;
+  characters: StoryboardFrameCharacter[];
+  durationSeconds: number;
+  annotations: string[];
+  imageStatus?: 'pending' | 'ready' | 'failed';
+  imageUrl?: string;
+};
+
+type StoryboardCharacterDesignReference = {
+  characterName: string;
+  briefMarkdown: string;
+  description: string;
+  profileStyle: string;
+  profileBehavior: string;
+  selectedDesignId: string;
+  selectedDesignPrompt: string;
+  allDesigns: CharacterDesignOption[];
+};
+
+type StoryboardAttachedReferenceImage = {
+  tag: string;
+  characterName: string;
+  designId: string;
+  designPrompt: string;
+  imageUrl: string;
+  inlineData: {
+    data: string;
+    mimeType: string;
+  };
 };
 
 type StyleRefineMode = 'direct' | 'subagent_refine';
@@ -277,6 +318,37 @@ const styleRefineSchema = stylePatchSchema.extend({
   request: z.string().trim().min(1).max(12000),
 });
 
+const storyboardToolArgsSchema = z.object({
+  storyboardNodeId: z.string().trim().min(1).optional(),
+  title: z.string().trim().min(1).max(240).optional(),
+  shots: z.array(z.unknown()).optional(),
+  frameCount: z.coerce.number().int().min(1).max(24).optional(),
+  autoGenerate: z.boolean().optional(),
+  createIfMissing: z.boolean().optional(),
+});
+
+const storyboardFrameCharacterSchema = z.object({
+  characterName: z.string().trim().min(1).max(120),
+  action: z.string().trim().min(1).max(1200),
+  designCue: z.string().trim().max(1200).default(''),
+});
+
+const storyboardFrameSchema = z.object({
+  frameNumber: z.coerce.number().int().min(1),
+  description: z.string().trim().min(1).max(8000),
+  cameraAngle: z.string().trim().max(300).default(''),
+  cameraMovement: z.string().trim().max(400).default(''),
+  characters: z.array(storyboardFrameCharacterSchema).max(20).default([]),
+  durationSeconds: z.coerce.number().min(0.1).max(120).default(3),
+  annotations: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+  imageStatus: z.enum(['pending', 'ready', 'failed']).optional(),
+  imageUrl: z.string().trim().max(2048).optional(),
+});
+
+const storyboardFramesPayloadSchema = z.object({
+  frames: z.array(storyboardFrameSchema).min(1).max(24),
+});
+
 const generatedStylePayloadSchema = z.object({
   writingStyle: styleTextSchema,
   characterStyle: styleTextSchema,
@@ -297,6 +369,7 @@ const CHARACTER_DESIGN_PUBLIC_DIR = path.join(
   'character-designs',
 );
 const CHARACTER_DESIGN_PUBLIC_URL_PREFIX = '/generated/character-designs';
+const CHARACTER_DESIGN_PUBLIC_URL_PREFIX_WITH_SLASH = `${CHARACTER_DESIGN_PUBLIC_URL_PREFIX}/`;
 
 const STORY_DEFAULT_POSITION = {
   x: 80,
@@ -311,6 +384,9 @@ const CHARACTER_NODE_SIZE = { width: 460, height: 520 } as const;
 const STYLE_NODE_SIZE = { width: 520, height: 980 } as const;
 const STORYBOARD_NODE_SIZE = { width: 420, height: 260 } as const;
 const NODE_COLLISION_MARGIN = 16;
+const STORYBOARD_DESCRIPTION_STREAM_CHUNK_SIZE = 3;
+const STORYBOARD_IMAGE_CHUNK_SIZE = 3;
+const STORYBOARD_IMAGE_RETRY_ATTEMPTS = 3;
 
 type NodeRect = {
   x: number;
@@ -673,6 +749,127 @@ function toImageExtension(mimeType?: string) {
   }
 
   return 'png';
+}
+
+function toMimeTypeFromPath(filePathOrUrl: string) {
+  const normalized = filePathOrUrl.trim().toLowerCase();
+  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
+    return 'image/jpeg';
+  }
+
+  if (normalized.endsWith('.webp')) {
+    return 'image/webp';
+  }
+
+  return 'image/png';
+}
+
+function toCharacterDesignAbsoluteFilePath(imageUrl: string) {
+  const normalized = normalizeStringValue(imageUrl);
+  if (!normalized.startsWith(CHARACTER_DESIGN_PUBLIC_URL_PREFIX_WITH_SLASH)) {
+    return null;
+  }
+
+  const relative = normalized.slice(
+    CHARACTER_DESIGN_PUBLIC_URL_PREFIX_WITH_SLASH.length,
+  );
+  if (!relative || relative.includes('..') || path.isAbsolute(relative)) {
+    return null;
+  }
+
+  return path.join(CHARACTER_DESIGN_PUBLIC_DIR, relative);
+}
+
+async function buildStoryboardReferenceImageParts(input: {
+  references: StoryboardCharacterDesignReference[];
+  frameCharacterNames: Set<string>;
+}) {
+  const seenUrls = new Set<string>();
+
+  const prioritized =
+    input.frameCharacterNames.size > 0
+      ? input.references.filter((reference) =>
+          input.frameCharacterNames.has(
+            reference.characterName.trim().toLowerCase(),
+          ),
+        )
+      : input.references;
+
+  const orderedReferences =
+    prioritized.length > 0 ? prioritized : input.references;
+
+  const queued: Array<{
+    characterName: string;
+    designId: string;
+    designPrompt: string;
+    imageUrl: string;
+  }> = [];
+
+  for (const reference of orderedReferences) {
+    const selectedFirst = reference.selectedDesignId
+      ? reference.allDesigns.find(
+          (item) => item.id === reference.selectedDesignId,
+        )
+      : null;
+
+    const sequence = [
+      ...(selectedFirst ? [selectedFirst] : []),
+      ...reference.allDesigns.filter((item) => item.id !== selectedFirst?.id),
+    ];
+
+    for (const design of sequence) {
+      const imageUrl = normalizeStringValue(design.imageUrl);
+      if (!imageUrl || seenUrls.has(imageUrl)) {
+        continue;
+      }
+
+      seenUrls.add(imageUrl);
+      queued.push({
+        characterName: reference.characterName,
+        designId: normalizeStringValue(design.id) || 'unknown-design',
+        designPrompt: normalizeStringValue(design.prompt),
+        imageUrl,
+      });
+
+      if (queued.length >= 10) {
+        break;
+      }
+    }
+
+    if (queued.length >= 10) {
+      break;
+    }
+  }
+
+  const loaded = await Promise.all(
+    queued.map(async (item, index) => {
+      const absolutePath = toCharacterDesignAbsoluteFilePath(item.imageUrl);
+      if (!absolutePath) {
+        return null;
+      }
+
+      try {
+        const bytes = await readFile(absolutePath);
+        return {
+          tag: `REF_${String(index + 1).padStart(2, '0')}`,
+          characterName: item.characterName,
+          designId: item.designId,
+          designPrompt: item.designPrompt,
+          imageUrl: item.imageUrl,
+          inlineData: {
+            data: bytes.toString('base64'),
+            mimeType: toMimeTypeFromPath(item.imageUrl),
+          },
+        } satisfies StoryboardAttachedReferenceImage;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  return loaded.filter((item): item is StoryboardAttachedReferenceImage =>
+    Boolean(item?.inlineData?.data),
+  );
 }
 
 async function saveCharacterDesignImageToPublicFolder(input: {
@@ -1206,6 +1403,609 @@ function getGenerateContentText(response: unknown) {
   return '';
 }
 
+function normalizeStoryboardFrame(
+  raw: unknown,
+  fallbackFrameNumber: number,
+): StoryboardFrame | null {
+  const parsed = storyboardFrameSchema.safeParse(raw);
+  if (!parsed.success) {
+    return null;
+  }
+
+  const frame = parsed.data;
+  return {
+    frameNumber:
+      Number.isFinite(frame.frameNumber) && frame.frameNumber > 0
+        ? Math.trunc(frame.frameNumber)
+        : fallbackFrameNumber,
+    description: frame.description,
+    cameraAngle: frame.cameraAngle,
+    cameraMovement: frame.cameraMovement,
+    characters: frame.characters.map((item) => ({
+      characterName: item.characterName,
+      action: item.action,
+      designCue: item.designCue,
+    })),
+    durationSeconds: frame.durationSeconds,
+    annotations: frame.annotations,
+    ...(frame.imageStatus ? { imageStatus: frame.imageStatus } : {}),
+    ...(frame.imageUrl ? { imageUrl: frame.imageUrl } : {}),
+  };
+}
+
+function normalizeStoryboardFramesFromUnknown(raw: unknown) {
+  if (!Array.isArray(raw)) {
+    return [] as StoryboardFrame[];
+  }
+
+  const frames = raw
+    .map((item, index) => normalizeStoryboardFrame(item, index + 1))
+    .filter((item): item is StoryboardFrame => Boolean(item))
+    .slice(0, 24)
+    .map((frame, index) => ({
+      ...frame,
+      frameNumber: index + 1,
+    }));
+
+  return frames;
+}
+
+function collectStoryboardCharacterDesignReferences(
+  characterNodes: Array<{
+    name: string;
+    briefMarkdown?: string | null;
+    profileJson?: string | null;
+  }>,
+) {
+  return characterNodes.map((character) => {
+    const profile = parseCharacterProfileRecord(character.profileJson);
+    const allDesigns = normalizeCharacterDesignOptions(
+      profile.characterDesigns,
+    );
+    const selectedDesignId = normalizeStringValue(
+      profile.selectedCharacterDesignId,
+    );
+    const selectedDesign = allDesigns.find(
+      (item) => item.id === selectedDesignId,
+    );
+
+    return {
+      characterName: character.name,
+      briefMarkdown: normalizeStringValue(character.briefMarkdown),
+      description: normalizeStringValue(profile.description),
+      profileStyle: normalizeStringValue(profile.style),
+      profileBehavior: normalizeStringValue(profile.behavior),
+      selectedDesignId,
+      selectedDesignPrompt:
+        normalizeStringValue(selectedDesign?.prompt) ||
+        normalizeStringValue(profile.characterDesignPrompt),
+      allDesigns,
+    } satisfies StoryboardCharacterDesignReference;
+  });
+}
+
+function buildStoryboardGenerationPrompt(input: {
+  storyTitle: string;
+  storyMarkdown: string;
+  frameCountHint?: number;
+  style: ProjectStylePayload;
+  characters: Array<{
+    name: string;
+    briefMarkdown: string;
+    description: string;
+    designCue: string;
+  }>;
+}) {
+  const characterSection = input.characters.length
+    ? input.characters
+        .map(
+          (character) =>
+            `- ${character.name}\n  - Description: ${character.description || 'N/A'}\n  - Design cue: ${character.designCue || 'N/A'}\n  - Brief: ${character.briefMarkdown || 'N/A'}`,
+        )
+        .join('\n')
+    : '- No character nodes found. Use story actors only if explicit in text.';
+
+  return [
+    'You are a storyboard director AI.',
+    'Create a simple storyboard list with strong actionable frame descriptions.',
+    'Use story context + project style guide + character design cues.',
+    'Return JSON only and do not wrap in markdown fences.',
+    'Output schema:',
+    '{"frames":[{"frameNumber":1,"description":"...","cameraAngle":"...","cameraMovement":"...","characters":[{"characterName":"...","action":"...","designCue":"..."}],"durationSeconds":3,"annotations":["..."],"imageUrl":""}]}',
+    'Rules:',
+    '1) Create a coherent sequence covering beginning/middle/end beats.',
+    '2) Descriptions must be detailed and visual, including framing intent.',
+    '3) Include camera angle and movement for each frame.',
+    '4) Include characters with explicit actions and design cues.',
+    '5) Include concise annotation tags for action clarity (e.g. "Action:...", "Emotion:...", "Transition:...").',
+    '6) Keep frame language production-friendly and specific.',
+    '7) Keep duration in seconds, usually between 1 and 8.',
+    '8) Keep total frame count appropriate to pacing and scope.',
+    ...(input.frameCountHint
+      ? [
+          `9) Target approximately ${input.frameCountHint} frames while preserving pacing quality.`,
+        ]
+      : []),
+    '',
+    `Story title: ${input.storyTitle}`,
+    'Story markdown:',
+    input.storyMarkdown,
+    '',
+    'Project style guide:',
+    `- Writing style: ${input.style.writingStyle || 'Not specified'}`,
+    `- Character style: ${input.style.characterStyle || 'Not specified'}`,
+    `- Art style: ${input.style.artStyle || 'Not specified'}`,
+    `- Storytelling pacing: ${input.style.storytellingPacing || 'Not specified'}`,
+    `- Extras: ${JSON.stringify(input.style.extras)}`,
+    '',
+    'Character references:',
+    characterSection,
+  ].join('\n');
+}
+
+async function deriveStoryboardFramesWithSubAgent(input: {
+  storyTitle: string;
+  storyMarkdown: string;
+  frameCountHint?: number;
+  style: ProjectStylePayload;
+  characters: Array<{
+    name: string;
+    briefMarkdown: string;
+    description: string;
+    designCue: string;
+  }>;
+}) {
+  const prompt = buildStoryboardGenerationPrompt(input);
+
+  const response = await characterDerivationAi.models.generateContent({
+    model: env.GEMINI_STORYBOARD_SUBAGENT_MODEL,
+    contents: prompt,
+    config: {
+      temperature: 0.3,
+      responseMimeType: 'application/json',
+    },
+  });
+
+  const text = extractJsonText(getGenerateContentText(response));
+  if (!text) {
+    return [] as StoryboardFrame[];
+  }
+
+  const parsedUnknown = JSON.parse(text);
+  const parsed = storyboardFramesPayloadSchema.safeParse(parsedUnknown);
+  if (parsed.success) {
+    return parsed.data.frames.map((frame, index) => ({
+      frameNumber: index + 1,
+      description: frame.description,
+      cameraAngle: frame.cameraAngle,
+      cameraMovement: frame.cameraMovement,
+      characters: frame.characters.map((item) => ({
+        characterName: item.characterName,
+        action: item.action,
+        designCue: item.designCue,
+      })),
+      durationSeconds: frame.durationSeconds,
+      annotations: frame.annotations,
+      ...(frame.imageUrl ? { imageUrl: frame.imageUrl } : {}),
+    }));
+  }
+
+  // Fallback parser in case model returns array directly instead of {frames:[...]}
+  const rawFrames = Array.isArray(parsedUnknown)
+    ? parsedUnknown
+    : (parsedUnknown as Record<string, unknown>)?.frames;
+  return normalizeStoryboardFramesFromUnknown(rawFrames);
+}
+
+function buildStoryboardFrameImagePrompt(input: {
+  storyTitle: string;
+  frame: StoryboardFrame;
+  style: ProjectStylePayload;
+  characterDesignReferences: StoryboardCharacterDesignReference[];
+  attachedReferenceImages: StoryboardAttachedReferenceImage[];
+}) {
+  const characters = input.frame.characters.length
+    ? input.frame.characters
+        .map(
+          (character) =>
+            `- ${character.characterName}: action=${character.action}; designCue=${character.designCue || 'N/A'}`,
+        )
+        .join('\n')
+    : '- No explicit characters for this frame.';
+
+  const frameCharacterNames = new Set(
+    input.frame.characters
+      .map((item) => item.characterName.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  const prioritizedCharacterReferences =
+    frameCharacterNames.size > 0
+      ? input.characterDesignReferences.filter((reference) =>
+          frameCharacterNames.has(reference.characterName.trim().toLowerCase()),
+        )
+      : input.characterDesignReferences;
+
+  const characterReferences = (
+    prioritizedCharacterReferences.length
+      ? prioritizedCharacterReferences
+      : input.characterDesignReferences
+  )
+    .map((reference) => {
+      const designLines = reference.allDesigns.length
+        ? reference.allDesigns
+            .map(
+              (design, index) =>
+                `    ${index + 1}) id=${design.id}; designPrompt=${design.prompt || 'N/A'}`,
+            )
+            .join('\n')
+        : '    No generated design options available yet.';
+
+      return [
+        `- ${reference.characterName}`,
+        `  - Description: ${reference.description || 'N/A'}`,
+        `  - Brief: ${reference.briefMarkdown || 'N/A'}`,
+        `  - Profile style cue: ${reference.profileStyle || 'N/A'}`,
+        `  - Profile behavior cue: ${reference.profileBehavior || 'N/A'}`,
+        `  - Selected design id: ${reference.selectedDesignId || 'N/A'}`,
+        `  - Selected design prompt: ${reference.selectedDesignPrompt || 'N/A'}`,
+        '  - All design options:',
+        designLines,
+      ].join('\n');
+    })
+    .join('\n');
+
+  const attachedReferenceLines = input.attachedReferenceImages.length
+    ? input.attachedReferenceImages
+        .map(
+          (item) =>
+            `- [${item.tag}] character=${item.characterName}; designId=${item.designId}; designPrompt=${item.designPrompt || 'N/A'}`,
+        )
+        .join('\n')
+    : '- No reference images were attached.';
+
+  return [
+    'Create one storyboard frame image as clean pre-production sketch art.',
+    'HARD REQUIREMENT: preserve character identity and visual consistency from character design references.',
+    'HARD REQUIREMENT: apply project art style directly to composition, lighting, palette, and texture treatment.',
+    'Keep it simple, readable, and annotation-friendly.',
+    'No heavy rendering, no photoreal output. Prioritize composition clarity.',
+    `Story: ${input.storyTitle}`,
+    `Frame description: ${input.frame.description}`,
+    `Camera angle: ${input.frame.cameraAngle || 'Not specified'}`,
+    `Camera movement: ${input.frame.cameraMovement || 'Static'}`,
+    `Frame annotations: ${input.frame.annotations.join('; ') || 'None'}`,
+    'Frame characters:',
+    characters,
+    '',
+    'Character design references (use for visual consistency):',
+    characterReferences || '- No character design references available.',
+    '',
+    'Attached reference images (authoritative mapping):',
+    attachedReferenceLines,
+    '',
+    'Execution rules:',
+    '1) For each named frame character, use attached image references by [REF_xx] tag as the primary source of visual truth.',
+    '2) Keep stable silhouette, outfit motifs, hairstyle, and color accents across frames.',
+    '3) If frame character names are missing, infer cast from description but still anchor to provided design references.',
+    '4) Do not ignore project art style; enforce it in lens language, lighting model, palette, and surface rendering.',
+    '5) Avoid introducing new character costume/hair changes unless explicitly requested in frame description.',
+    '',
+    'Project style guide:',
+    `- Character style: ${input.style.characterStyle || 'Not specified'}`,
+    `- Art style: ${input.style.artStyle || 'Not specified'}`,
+    `- Storytelling pacing: ${input.style.storytellingPacing || 'Not specified'}`,
+  ].join('\n');
+}
+
+async function generateStoryboardFrameImage(input: {
+  storyTitle: string;
+  frame: StoryboardFrame;
+  style: ProjectStylePayload;
+  characterDesignReferences: StoryboardCharacterDesignReference[];
+}) {
+  const frameCharacterNames = new Set(
+    input.frame.characters
+      .map((item) => item.characterName.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  const modelName = normalizeStringValue(env.GEMINI_STORYBOARD_IMAGE_MODEL);
+  const useGeminiImageModel = /gemini/i.test(modelName);
+
+  if (useGeminiImageModel) {
+    const attachedReferenceImages = await buildStoryboardReferenceImageParts({
+      references: input.characterDesignReferences,
+      frameCharacterNames,
+    });
+
+    const prompt = buildStoryboardFrameImagePrompt({
+      ...input,
+      attachedReferenceImages,
+    });
+
+    const multimodalContents: Array<
+      | string
+      | { text: string }
+      | { inlineData: { data: string; mimeType: string } }
+    > = [];
+
+    for (const reference of attachedReferenceImages) {
+      multimodalContents.push({
+        text: `[${reference.tag}] Character: ${reference.characterName}; designId: ${reference.designId}; designPrompt: ${reference.designPrompt || 'N/A'}`,
+      });
+      multimodalContents.push({
+        inlineData: reference.inlineData,
+      });
+    }
+
+    multimodalContents.push(prompt);
+
+    const response = await characterDerivationAi.models.generateContent({
+      model: modelName,
+      contents: multimodalContents,
+      config: {
+        imageConfig: {
+          aspectRatio: '16:9',
+        },
+        // Explicitly request image output when model supports multimodal responses.
+        responseModalities: ['IMAGE', 'TEXT'],
+      },
+    });
+
+    const record = response as unknown as Record<string, unknown>;
+    const candidates = Array.isArray(record.candidates)
+      ? (record.candidates as Array<Record<string, unknown>>)
+      : [];
+
+    for (const candidate of candidates) {
+      const content =
+        candidate && typeof candidate.content === 'object'
+          ? (candidate.content as Record<string, unknown>)
+          : null;
+      const parts =
+        content && Array.isArray(content.parts)
+          ? (content.parts as Array<Record<string, unknown>>)
+          : [];
+
+      for (const part of parts) {
+        const inlineData =
+          part && typeof part.inlineData === 'object'
+            ? (part.inlineData as Record<string, unknown>)
+            : null;
+        const imageBytes = normalizeStringValue(inlineData?.data);
+        if (!imageBytes) {
+          continue;
+        }
+
+        return saveCharacterDesignImageToPublicFolder({
+          imageBytesBase64: imageBytes,
+          mimeType: normalizeStringValue(inlineData?.mimeType) || 'image/png',
+        });
+      }
+    }
+
+    throw new Error('Gemini image model returned no inline image bytes.');
+  }
+
+  const prompt = buildStoryboardFrameImagePrompt({
+    ...input,
+    attachedReferenceImages: [],
+  });
+
+  const response = await characterDerivationAi.models.generateImages({
+    model: modelName,
+    prompt,
+    config: {
+      numberOfImages: 1,
+      aspectRatio: '16:9',
+      outputMimeType: 'image/png',
+    },
+  });
+
+  const image = response.generatedImages?.[0]?.image;
+  const imageBytes = normalizeStringValue(image?.imageBytes);
+  if (!imageBytes) {
+    throw new Error('Image model returned no image bytes for this frame.');
+  }
+
+  return saveCharacterDesignImageToPublicFolder({
+    imageBytesBase64: imageBytes,
+    mimeType: normalizeStringValue(image?.mimeType) || 'image/png',
+  });
+}
+
+async function generateStoryboardFrameImageWithRetry(input: {
+  storyTitle: string;
+  frame: StoryboardFrame;
+  style: ProjectStylePayload;
+  characterDesignReferences: StoryboardCharacterDesignReference[];
+  maxAttempts?: number;
+}) {
+  const maxAttempts = Math.max(
+    1,
+    input.maxAttempts ?? STORYBOARD_IMAGE_RETRY_ATTEMPTS,
+  );
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const imageUrl = await generateStoryboardFrameImage(input);
+      return {
+        ok: true,
+        imageUrl,
+        attempts: attempt,
+      } as const;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  return {
+    ok: false,
+    attempts: maxAttempts,
+    error:
+      lastError instanceof Error
+        ? lastError.message
+        : 'Storyboard image generation failed.',
+  } as const;
+}
+
+export async function regenerateStoryboardFrameImageForUser(input: {
+  userId: string;
+  projectId: string;
+  storyboardNodeId: string;
+  frameNumber: number;
+}) {
+  const projectGraph = await prisma.project.findFirst({
+    where: {
+      id: input.projectId,
+      userId: input.userId,
+    },
+    select: {
+      id: true,
+      story: {
+        select: {
+          title: true,
+        },
+      },
+      styleNodes: {
+        select: {
+          writingStyle: true,
+          characterStyle: true,
+          artStyle: true,
+          storytellingPacing: true,
+          description: true,
+          extrasJson: true,
+        },
+        take: 1,
+      },
+      characterNodes: {
+        select: {
+          name: true,
+          briefMarkdown: true,
+          profileJson: true,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      },
+      storyboardNodes: {
+        where: {
+          id: input.storyboardNodeId,
+        },
+        select: {
+          id: true,
+          shotsJson: true,
+        },
+        take: 1,
+      },
+    },
+  });
+
+  if (!projectGraph) {
+    return {
+      ok: false,
+      message: 'Project not found.',
+    } as const;
+  }
+
+  const storyboardNode = projectGraph.storyboardNodes[0];
+  if (!storyboardNode) {
+    return {
+      ok: false,
+      message: 'Storyboard node not found.',
+    } as const;
+  }
+
+  const styleNode = projectGraph.styleNodes[0];
+  const style = styleNode
+    ? toProjectStylePayload(styleNode)
+    : {
+        writingStyle: '',
+        characterStyle: '',
+        artStyle: '',
+        storytellingPacing: '',
+        extras: {},
+      };
+
+  const frames = normalizeStoryboardFramesFromUnknown(
+    (() => {
+      const shotsJson = normalizeStringValue(storyboardNode.shotsJson);
+      if (!shotsJson) {
+        return [] as unknown[];
+      }
+
+      try {
+        const parsed = JSON.parse(shotsJson);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [] as unknown[];
+      }
+    })(),
+  );
+
+  const targetIndex = frames.findIndex(
+    (frame) => frame.frameNumber === input.frameNumber,
+  );
+  if (targetIndex < 0) {
+    return {
+      ok: false,
+      message: `Frame ${input.frameNumber} was not found in storyboard.`,
+    } as const;
+  }
+
+  const frame = frames[targetIndex];
+  if (!frame.description.trim()) {
+    return {
+      ok: false,
+      message: 'Cannot generate image for an empty frame description.',
+    } as const;
+  }
+
+  const result = await generateStoryboardFrameImageWithRetry({
+    storyTitle: normalizeStringValue(projectGraph.story?.title) || 'Story',
+    frame,
+    style,
+    characterDesignReferences: collectStoryboardCharacterDesignReferences(
+      projectGraph.characterNodes,
+    ),
+    maxAttempts: STORYBOARD_IMAGE_RETRY_ATTEMPTS,
+  });
+
+  const nextFrame: StoryboardFrame = result.ok
+    ? {
+        ...frame,
+        imageUrl: result.imageUrl,
+        imageStatus: 'ready',
+      }
+    : {
+        ...frame,
+        imageStatus: 'failed',
+      };
+
+  const nextFrames = frames.map((item, index) =>
+    index === targetIndex ? nextFrame : item,
+  );
+
+  const node = await prisma.storyboardNode.update({
+    where: {
+      id: storyboardNode.id,
+    },
+    data: {
+      shotsJson: JSON.stringify(nextFrames),
+    },
+  });
+
+  return {
+    ok: result.ok,
+    node,
+    frameNumber: input.frameNumber,
+    attempts: result.attempts,
+    ...(result.ok ? { imageUrl: result.imageUrl } : { message: result.error }),
+  } as const;
+}
+
 function normalizeStyleExtras(raw: unknown) {
   if (!raw || typeof raw !== 'object') {
     return {} as Record<string, string>;
@@ -1236,6 +2036,48 @@ function parseStyleExtrasJson(raw: string | null | undefined) {
   } catch {
     return {} as Record<string, string>;
   }
+}
+
+function parseLegacyStyleDescription(description: string) {
+  const parsed: Partial<ProjectStylePayload> = {};
+  const normalized = description
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of normalized) {
+    const match = /^([^:]+):\s*(.+)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+
+    const key = match[1].trim().toLowerCase();
+    const value = match[2].trim();
+    if (!value) {
+      continue;
+    }
+
+    if (key === 'writing style') {
+      parsed.writingStyle = value;
+      continue;
+    }
+
+    if (key === 'character style') {
+      parsed.characterStyle = value;
+      continue;
+    }
+
+    if (key === 'art style') {
+      parsed.artStyle = value;
+      continue;
+    }
+
+    if (key === 'storytelling pacing') {
+      parsed.storytellingPacing = value;
+    }
+  }
+
+  return parsed;
 }
 
 function buildStyleDescription(payload: ProjectStylePayload) {
@@ -1272,13 +2114,15 @@ function toProjectStylePayload(node: {
   const storytellingPacing = normalizeStringValue(node.storytellingPacing);
 
   const legacyFallback = normalizeStringValue(node.description);
+  const legacyParsed = parseLegacyStyleDescription(legacyFallback);
   const extras = parseStyleExtrasJson(node.extrasJson);
 
   return {
-    writingStyle: writingStyle || legacyFallback,
-    characterStyle,
-    artStyle,
-    storytellingPacing,
+    writingStyle: writingStyle || legacyParsed.writingStyle || legacyFallback,
+    characterStyle: characterStyle || legacyParsed.characterStyle || '',
+    artStyle: artStyle || legacyParsed.artStyle || '',
+    storytellingPacing:
+      storytellingPacing || legacyParsed.storytellingPacing || '',
     extras,
   };
 }
@@ -3433,22 +4277,491 @@ export async function generateCharacterDesignTool(context: ToolContext) {
   };
 }
 
-export async function generateStoryboardTool(context: ToolContext) {
-  if (!context.projectId) {
-    throw new Error('projectId is required for storyboard generation');
+async function runStoryboardGenerationTool(
+  context: ToolContext,
+  options?: {
+    sourceTool?: 'generate_storyboard' | 'update_storyboard';
+    createIfMissingDefault?: boolean;
+  },
+) {
+  const sourceTool = options?.sourceTool ?? 'generate_storyboard';
+  const access = await verifyProjectAccess(context);
+  if (!access.ok) {
+    return access;
   }
 
-  const [position] = await allocateNodePositions(context.projectId, 1);
+  const parsedArgs = storyboardToolArgsSchema.safeParse(context.args);
+  if (!parsedArgs.success) {
+    return {
+      ok: false,
+      message: `Invalid payload for ${sourceTool}.`,
+      issues: formatValidationIssues(parsedArgs.error.issues),
+    };
+  }
 
-  const storyboard = await prisma.storyboardNode.create({
-    data: {
-      projectId: context.projectId,
-      title: String(context.args.title ?? 'Storyboard Draft'),
-      shotsJson: JSON.stringify(context.args.shots ?? []),
-      positionX: position?.x ?? 1320,
-      positionY: position?.y ?? 120,
+  const projectId = context.projectId;
+  if (!projectId) {
+    return {
+      ok: false,
+      message: 'This tool requires an active project context.',
+    };
+  }
+
+  const projectGraph = await prisma.project.findFirst({
+    where: {
+      id: projectId,
+      userId: context.userId,
+    },
+    select: {
+      id: true,
+      story: {
+        select: {
+          id: true,
+          title: true,
+          markdown: true,
+        },
+      },
+      characterNodes: {
+        select: {
+          name: true,
+          briefMarkdown: true,
+          profileJson: true,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      },
+      storyboardNodes: {
+        select: {
+          id: true,
+          title: true,
+          positionX: true,
+          positionY: true,
+        },
+        orderBy: {
+          updatedAt: 'desc',
+        },
+      },
     },
   });
 
-  return { ok: true, storyboard };
+  if (!projectGraph) {
+    return {
+      ok: false,
+      message: 'Active project was not found for this user.',
+    };
+  }
+
+  const storyTitle = normalizeStringValue(projectGraph.story?.title) || 'Story';
+  const storyMarkdown = normalizeStringValue(projectGraph.story?.markdown);
+  if (!storyMarkdown) {
+    return {
+      ok: false,
+      message:
+        'Storyboard generation requires story content. Import or write the story first.',
+    };
+  }
+
+  const styleCanonical = await ensureCanonicalStyleNode(context);
+  if (!styleCanonical.ok) {
+    return styleCanonical;
+  }
+
+  const frameCountHint = parsedArgs.data.frameCount;
+  const autoGenerate = parsedArgs.data.autoGenerate ?? true;
+  const requestedStoryboardNodeId = normalizeStringValue(
+    parsedArgs.data.storyboardNodeId,
+  );
+  const createIfMissing =
+    parsedArgs.data.createIfMissing ?? options?.createIfMissingDefault ?? true;
+  const providedFrames = normalizeStoryboardFramesFromUnknown(
+    parsedArgs.data.shots,
+  );
+
+  const existingStoryboard = requestedStoryboardNodeId
+    ? projectGraph.storyboardNodes.find(
+        (node) => node.id === requestedStoryboardNodeId,
+      )
+    : (projectGraph.storyboardNodes[0] ?? null);
+
+  if (requestedStoryboardNodeId && !existingStoryboard) {
+    return {
+      ok: false,
+      message:
+        'Requested storyboard node was not found in the active project. Use an existing storyboardNodeId or omit it to target the latest storyboard node.',
+      requestedStoryboardNodeId,
+    };
+  }
+
+  if (!existingStoryboard && !createIfMissing) {
+    return {
+      ok: false,
+      message:
+        'No storyboard node exists to update in this project. Create one first or set createIfMissing=true.',
+    };
+  }
+
+  const title =
+    normalizeStringValue(parsedArgs.data.title) ||
+    existingStoryboard?.title ||
+    `${storyTitle} Storyboard`;
+
+  const storyboard = existingStoryboard
+    ? await prisma.storyboardNode.update({
+        where: {
+          id: existingStoryboard.id,
+        },
+        data: {
+          title,
+          ...(providedFrames.length
+            ? { shotsJson: JSON.stringify(providedFrames) }
+            : {}),
+        },
+      })
+    : await (async () => {
+        const [position] = await allocateNodePositions(projectId, 1);
+        return prisma.storyboardNode.create({
+          data: {
+            projectId,
+            title,
+            shotsJson: JSON.stringify(providedFrames),
+            positionX: position?.x ?? 1320,
+            positionY: position?.y ?? 120,
+          },
+        });
+      })();
+
+  const mutationMode = existingStoryboard ? 'updated' : 'created';
+
+  if (!autoGenerate && providedFrames.length) {
+    emitRuntimeEvent(context, {
+      type: 'agent.project.changed',
+      payload: {
+        projectId,
+        sourceTool,
+      },
+    });
+
+    return {
+      ok: true,
+      storyboard,
+      generated: false,
+      mutationMode,
+      message:
+        mutationMode === 'updated'
+          ? 'Storyboard node updated from provided frames.'
+          : 'Storyboard node created from provided frames.',
+    };
+  }
+
+  if (autoGenerate) {
+    await prisma.storyboardNode.update({
+      where: {
+        id: storyboard.id,
+      },
+      data: {
+        title,
+        shotsJson: JSON.stringify([]),
+      },
+    });
+
+    emitRuntimeEvent(context, {
+      type: 'agent.project.changed',
+      payload: {
+        projectId,
+        sourceTool,
+      },
+    });
+  }
+
+  const characterDesignReferences = collectStoryboardCharacterDesignReferences(
+    projectGraph.characterNodes,
+  );
+
+  const characters = characterDesignReferences.map((reference) => ({
+    name: reference.characterName,
+    briefMarkdown: reference.briefMarkdown,
+    description: reference.description,
+    designCue: reference.selectedDesignPrompt || reference.profileStyle,
+  }));
+
+  emitRuntimeEvent(context, {
+    type: 'agent.status',
+    payload: {
+      phase: 'started',
+      sourceTool,
+      projectId,
+      storyboardNodeId: storyboard.id,
+      generationPhase: 'descriptions',
+      message:
+        mutationMode === 'updated'
+          ? 'Updating storyboard frames from story and style guide.'
+          : 'Generating storyboard frames from story and style guide.',
+    },
+  });
+
+  void Promise.resolve()
+    .then(async () => {
+      const generatedFrames = await deriveStoryboardFramesWithSubAgent({
+        storyTitle,
+        storyMarkdown,
+        frameCountHint,
+        style: styleCanonical.style,
+        characters,
+      });
+
+      const nextFrames = generatedFrames.length
+        ? generatedFrames
+        : providedFrames;
+
+      if (!nextFrames.length) {
+        throw new Error('Storyboard generation returned no usable frames.');
+      }
+
+      const framesWithPendingImages: StoryboardFrame[] = nextFrames.map(
+        (frame) => ({
+          ...frame,
+          imageStatus: frame.imageUrl ? 'ready' : 'pending',
+        }),
+      );
+
+      let streamedFrames: StoryboardFrame[] = [];
+      for (
+        let chunkStart = 0;
+        chunkStart < framesWithPendingImages.length;
+        chunkStart += STORYBOARD_DESCRIPTION_STREAM_CHUNK_SIZE
+      ) {
+        const chunk = framesWithPendingImages.slice(
+          chunkStart,
+          chunkStart + STORYBOARD_DESCRIPTION_STREAM_CHUNK_SIZE,
+        );
+        streamedFrames = [...streamedFrames, ...chunk];
+
+        await prisma.storyboardNode.update({
+          where: {
+            id: storyboard.id,
+          },
+          data: {
+            title,
+            shotsJson: JSON.stringify(streamedFrames),
+          },
+        });
+
+        emitRuntimeEvent(context, {
+          type: 'agent.status',
+          payload: {
+            phase: 'descriptions_progress',
+            sourceTool,
+            projectId,
+            storyboardNodeId: storyboard.id,
+            generationPhase: 'descriptions',
+            totalFrames: framesWithPendingImages.length,
+            completedFrames: streamedFrames.length,
+            message: `Storyboard descriptions: ${streamedFrames.length}/${framesWithPendingImages.length}`,
+          },
+        });
+
+        emitRuntimeEvent(context, {
+          type: 'agent.project.changed',
+          payload: {
+            projectId,
+            sourceTool,
+          },
+        });
+      }
+
+      const pendingImageCount = framesWithPendingImages.filter(
+        (frame) => !frame.imageUrl,
+      ).length;
+
+      emitRuntimeEvent(context, {
+        type: 'agent.status',
+        payload: {
+          phase: 'descriptions_completed',
+          sourceTool,
+          projectId,
+          storyboardNodeId: storyboard.id,
+          generationPhase: pendingImageCount > 0 ? 'images' : 'completed',
+          frameCount: framesWithPendingImages.length,
+          pendingImageCount,
+          message:
+            pendingImageCount > 0
+              ? `Storyboard descriptions ready. Generating ${pendingImageCount} frame image(s) in chunks of ${STORYBOARD_IMAGE_CHUNK_SIZE}.`
+              : 'Storyboard descriptions ready. No image generation needed.',
+        },
+      });
+
+      emitRuntimeEvent(context, {
+        type: 'agent.project.changed',
+        payload: {
+          projectId,
+          sourceTool,
+        },
+      });
+
+      const imageFrames = [...streamedFrames];
+      let imageSuccessCount = 0;
+      let imageFailedCount = 0;
+
+      const pendingIndexes = imageFrames
+        .map((frame, index) => ({ frame, index }))
+        .filter(({ frame }) => !frame.imageUrl)
+        .map(({ index }) => index);
+
+      if (pendingIndexes.length) {
+        emitRuntimeEvent(context, {
+          type: 'agent.status',
+          payload: {
+            phase: 'images_started',
+            sourceTool,
+            projectId,
+            storyboardNodeId: storyboard.id,
+            generationPhase: 'images',
+            totalImages: pendingIndexes.length,
+            chunkSize: STORYBOARD_IMAGE_CHUNK_SIZE,
+            message: `Generating storyboard images ${pendingIndexes.length} total, ${STORYBOARD_IMAGE_CHUNK_SIZE} at a time.`,
+          },
+        });
+      }
+
+      for (
+        let chunkStart = 0;
+        chunkStart < pendingIndexes.length;
+        chunkStart += STORYBOARD_IMAGE_CHUNK_SIZE
+      ) {
+        const chunkIndexes = pendingIndexes.slice(
+          chunkStart,
+          chunkStart + STORYBOARD_IMAGE_CHUNK_SIZE,
+        );
+
+        await Promise.all(
+          chunkIndexes.map(async (index) => {
+            const frame = imageFrames[index];
+            if (!frame || frame.imageUrl) {
+              return;
+            }
+
+            const result = await generateStoryboardFrameImageWithRetry({
+              storyTitle,
+              frame,
+              style: styleCanonical.style,
+              characterDesignReferences,
+              maxAttempts: STORYBOARD_IMAGE_RETRY_ATTEMPTS,
+            });
+
+            if (result.ok) {
+              imageFrames[index] = {
+                ...frame,
+                imageUrl: result.imageUrl,
+                imageStatus: 'ready',
+              };
+              imageSuccessCount += 1;
+            } else {
+              imageFrames[index] = {
+                ...frame,
+                imageStatus: 'failed',
+              };
+              imageFailedCount += 1;
+            }
+          }),
+        );
+
+        await prisma.storyboardNode.update({
+          where: {
+            id: storyboard.id,
+          },
+          data: {
+            shotsJson: JSON.stringify(imageFrames),
+          },
+        });
+
+        emitRuntimeEvent(context, {
+          type: 'agent.status',
+          payload: {
+            phase: 'images_progress',
+            sourceTool,
+            projectId,
+            storyboardNodeId: storyboard.id,
+            generationPhase: 'images',
+            totalImages: pendingIndexes.length,
+            completedImages: imageSuccessCount + imageFailedCount,
+            successImages: imageSuccessCount,
+            failedImages: imageFailedCount,
+            message: `Storyboard image progress: ${imageSuccessCount + imageFailedCount}/${pendingIndexes.length}`,
+          },
+        });
+
+        emitRuntimeEvent(context, {
+          type: 'agent.project.changed',
+          payload: {
+            projectId,
+            sourceTool,
+          },
+        });
+      }
+
+      emitRuntimeEvent(context, {
+        type: 'agent.status',
+        payload: {
+          phase: 'completed',
+          sourceTool,
+          projectId,
+          storyboardNodeId: storyboard.id,
+          generationPhase: 'completed',
+          message:
+            imageFailedCount > 0
+              ? `Storyboard completed with ${imageSuccessCount} image(s) and ${imageFailedCount} failed image generation(s).`
+              : `Storyboard generation completed with ${nextFrames.length} frame(s) and images ready.`,
+        },
+      });
+
+      emitRuntimeEvent(context, {
+        type: 'agent.project.changed',
+        payload: {
+          projectId,
+          sourceTool,
+        },
+      });
+    })
+    .catch((error) => {
+      emitRuntimeEvent(context, {
+        type: 'agent.status',
+        payload: {
+          phase: 'completed',
+          sourceTool,
+          projectId,
+          message:
+            error instanceof Error
+              ? `Storyboard generation failed: ${error.message}`
+              : 'Storyboard generation failed.',
+        },
+      });
+    });
+
+  return {
+    ok: true,
+    deferred: true,
+    storyboard,
+    mutationMode,
+    message:
+      mutationMode === 'updated'
+        ? 'Storyboard node updated. Generating detailed frames from story and style guide now.'
+        : 'Storyboard node created. Generating detailed frames from story and style guide now.',
+    frameCountHint,
+    startedAt: new Date().toISOString(),
+  };
+}
+
+export async function generateStoryboardTool(context: ToolContext) {
+  return runStoryboardGenerationTool(context, {
+    sourceTool: 'generate_storyboard',
+    createIfMissingDefault: true,
+  });
+}
+
+export async function updateStoryboardTool(context: ToolContext) {
+  return runStoryboardGenerationTool(context, {
+    sourceTool: 'update_storyboard',
+    createIfMissingDefault: false,
+  });
 }

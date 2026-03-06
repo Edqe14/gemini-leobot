@@ -46,6 +46,13 @@ type MonitorEvent = {
   detail: Record<string, unknown>;
 };
 
+type EventImageAttachment = {
+  kind: 'image-inline';
+  mimeType: string;
+  dataUrl: string;
+  bytesApprox?: number;
+};
+
 type DbSnapshotResponse = {
   snapshotAt: string;
   counts: Record<string, number>;
@@ -90,6 +97,46 @@ function isErrorLikeEvent(event: MonitorEvent) {
 
   const actionType = event.detail.actionType;
   return typeof actionType === 'string' && actionType.includes('error');
+}
+
+function getEventImageAttachments(event: MonitorEvent) {
+  const raw = event.detail.attachments;
+  if (!Array.isArray(raw)) {
+    return [] as EventImageAttachment[];
+  }
+
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const record = item as Record<string, unknown>;
+      const kind =
+        typeof record.kind === 'string' ? record.kind.trim() : 'image-inline';
+      const mimeType =
+        typeof record.mimeType === 'string' ? record.mimeType.trim() : '';
+      const dataUrl =
+        typeof record.dataUrl === 'string' ? record.dataUrl.trim() : '';
+      const bytesApprox =
+        typeof record.bytesApprox === 'number' ? record.bytesApprox : undefined;
+
+      if (
+        kind !== 'image-inline' ||
+        !mimeType.startsWith('image/') ||
+        !dataUrl
+      ) {
+        return null;
+      }
+
+      return {
+        kind: 'image-inline',
+        mimeType,
+        dataUrl,
+        ...(typeof bytesApprox === 'number' ? { bytesApprox } : {}),
+      } satisfies EventImageAttachment;
+    })
+    .filter((item): item is EventImageAttachment => Boolean(item));
 }
 
 export function DebugMonitorPage() {
@@ -433,6 +480,39 @@ function DebugMonitorView() {
                     </span>
                   ) : null}
                 </div>
+                {(() => {
+                  const attachments = getEventImageAttachments(event);
+                  if (!attachments.length) {
+                    return null;
+                  }
+
+                  return (
+                    <div className='mt-2'>
+                      <p className='mb-2 text-xs text-muted-foreground'>
+                        attachments ({attachments.length})
+                      </p>
+                      <div className='grid grid-cols-1 gap-2 md:grid-cols-2'>
+                        {attachments.map((attachment, index) => (
+                          <div
+                            key={`${event.id}-img-${index}`}
+                            className='rounded border border-border bg-muted/30 p-2'>
+                            <img
+                              src={attachment.dataUrl}
+                              alt={`Debug attachment ${index + 1}`}
+                              className='max-h-56 w-full rounded object-contain'
+                            />
+                            <p className='mt-1 text-[11px] text-muted-foreground'>
+                              {attachment.mimeType}
+                              {typeof attachment.bytesApprox === 'number'
+                                ? ` • ~${attachment.bytesApprox} bytes`
+                                : ''}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
                 <details className='mt-2'>
                   <summary className='cursor-pointer text-xs text-muted-foreground'>
                     show detail

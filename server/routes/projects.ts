@@ -8,6 +8,7 @@ import {
   listProjectsForUser,
 } from '../services/project-service';
 import {
+  regenerateStoryboardFrameImageForUser,
   regenerateCharacterDesignOptionsForUser,
   selectCharacterDesignOptionForUser,
   updateCharacterDesignNodePositionForUser,
@@ -35,6 +36,36 @@ const updateStyleNodeSchema = z.object({
 const updateNodePositionSchema = z.object({
   positionX: z.number().finite(),
   positionY: z.number().finite(),
+});
+
+const storyboardFrameUpdateSchema = z.object({
+  frameNumber: z.coerce.number().int().min(1),
+  description: z.string().trim().max(8000).default(''),
+  cameraAngle: z.string().trim().max(300).default(''),
+  cameraMovement: z.string().trim().max(400).default(''),
+  characters: z
+    .array(
+      z.object({
+        characterName: z.string().trim().min(1).max(120),
+        action: z.string().trim().min(1).max(1200),
+        designCue: z.string().trim().max(1200).default(''),
+      }),
+    )
+    .max(20)
+    .default([]),
+  durationSeconds: z.coerce.number().min(0.1).max(120).default(3),
+  annotations: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+  imageStatus: z.enum(['pending', 'ready', 'failed']).optional(),
+  imageUrl: z.string().trim().max(2048).optional(),
+});
+
+const updateStoryboardNodeSchema = z.object({
+  title: z.string().trim().min(1).max(240),
+  frames: z.array(storyboardFrameUpdateSchema).max(24).default([]),
+});
+
+const regenerateStoryboardFrameImageSchema = z.object({
+  frameNumber: z.coerce.number().int().min(1),
 });
 
 const regenerateCharacterDesignSchema = z.object({
@@ -730,6 +761,111 @@ projectsRouter.patch(
       nodeId,
       positionX: payload.positionX,
       positionY: payload.positionY,
+    });
+  },
+);
+
+projectsRouter.patch(
+  '/api/projects/:projectId/storyboard-nodes/:nodeId',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload = updateStoryboardNodeSchema.parse(body);
+    const normalizedFrames = payload.frames
+      .slice(0, 24)
+      .map((frame, index) => ({
+        ...frame,
+        frameNumber: index + 1,
+      }));
+
+    const updated = await prisma.storyboardNode.updateMany({
+      where: {
+        id: nodeId,
+        projectId,
+      },
+      data: {
+        title: payload.title,
+        shotsJson: JSON.stringify(normalizedFrames),
+      },
+    });
+
+    if (!updated.count) {
+      return c.json({ error: 'Storyboard node not found' }, 404);
+    }
+
+    const node = await prisma.storyboardNode.findFirst({
+      where: {
+        id: nodeId,
+        projectId,
+      },
+    });
+
+    return c.json({ ok: true, node });
+  },
+);
+
+projectsRouter.post(
+  '/api/projects/:projectId/storyboard-nodes/:nodeId/regenerate-image',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload = regenerateStoryboardFrameImageSchema.parse(body);
+
+    const result = await regenerateStoryboardFrameImageForUser({
+      userId: session.user.id,
+      projectId,
+      storyboardNodeId: nodeId,
+      frameNumber: payload.frameNumber,
+    });
+
+    if (!result.ok) {
+      const errorNode = 'node' in result ? result.node : undefined;
+      const errorFrameNumber =
+        'frameNumber' in result ? result.frameNumber : payload.frameNumber;
+      const errorAttempts = 'attempts' in result ? result.attempts : undefined;
+
+      return c.json(
+        {
+          ok: false,
+          error: result.message || 'Failed to regenerate storyboard image.',
+          node: errorNode,
+          frameNumber: errorFrameNumber,
+          attempts: errorAttempts,
+        },
+        500,
+      );
+    }
+
+    const imageUrl = 'imageUrl' in result ? result.imageUrl : undefined;
+
+    return c.json({
+      ok: true,
+      node: result.node,
+      frameNumber: result.frameNumber,
+      imageUrl,
+      attempts: result.attempts,
     });
   },
 );

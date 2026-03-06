@@ -53,6 +53,7 @@ const NON_BLOCKING_TOOL_NAMES = new Set([
   'upsert_project_style_node',
   'refine_project_style_node',
   'generate_storyboard',
+  'update_storyboard',
 ]);
 
 function applyAsyncFunctionCallingBehavior(
@@ -267,6 +268,7 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
                   'upsert_project_style_node',
                   'refine_project_style_node',
                   'generate_storyboard',
+                  'update_storyboard',
                 ].includes(toolName);
 
               if (

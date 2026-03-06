@@ -111,6 +111,7 @@ type StyleNodeRecord = {
 type StoryboardNodeRecord = {
   id: string;
   title: string;
+  shotsJson?: string | null;
   positionX?: number | null;
   positionY?: number | null;
 };
@@ -157,6 +158,33 @@ type CharacterDesignSelectionResponse = {
 
 type StyleSaveState = 'idle' | 'saving' | 'saved' | 'error';
 
+type StoryboardFrameRecord = {
+  frameNumber: number;
+  description: string;
+  cameraAngle: string;
+  cameraMovement: string;
+  characters: Array<{
+    characterName: string;
+    action: string;
+    designCue: string;
+  }>;
+  durationSeconds: number;
+  annotations: string[];
+  imageStatus?: 'pending' | 'ready' | 'failed';
+  imageUrl?: string;
+};
+
+type StoryboardSaveState = 'idle' | 'saving' | 'saved' | 'error' | 'generating';
+
+type StoryboardDraftState = {
+  title: string;
+  frames: StoryboardFrameRecord[];
+  saveState: StoryboardSaveState;
+  saveMessage?: string;
+  generationPhase?: 'descriptions' | 'images' | 'completed';
+  isLocalDirty?: boolean;
+};
+
 type StyleDraftState = {
   name: string;
   writingStyle: string;
@@ -171,6 +199,21 @@ type StyleDraftState = {
 type StyleNodeUpdateResponse = {
   ok?: boolean;
   node?: StyleNodeRecord;
+  error?: string;
+};
+
+type StoryboardNodeUpdateResponse = {
+  ok?: boolean;
+  node?: StoryboardNodeRecord;
+  error?: string;
+};
+
+type StoryboardImageRegenerateResponse = {
+  ok?: boolean;
+  node?: StoryboardNodeRecord;
+  frameNumber?: number;
+  imageUrl?: string;
+  attempts?: number;
   error?: string;
 };
 
@@ -310,12 +353,28 @@ type StyleCardNodeData = {
   onExtrasTextChange: (value: string) => void;
 };
 
+type StoryboardCardNodeData = {
+  storyboardId: string;
+  hasIncomingConnection: boolean;
+  hasOutgoingConnection: boolean;
+  title: string;
+  frames: StoryboardFrameRecord[];
+  saveState: StoryboardSaveState;
+  saveMessage?: string;
+  onTitleChange: (value: string) => void;
+  onFrameDescriptionChange: (frameNumber: number, value: string) => void;
+  onFrameDurationChange: (frameNumber: number, value: number) => void;
+  onFrameRetryImage: (frameNumber: number) => void;
+  onFrameAdd: () => void;
+};
+
 type CanvasNodeData =
   | CreativeNodeData
   | StoryImportNodeData
   | CharacterCardNodeData
   | CharacterDesignNodeData
-  | StyleCardNodeData;
+  | StyleCardNodeData
+  | StoryboardCardNodeData;
 type StoryImportCanvasNode = Node<StoryImportNodeData, 'storyImport'>;
 type CharacterCardCanvasNode = Node<CharacterCardNodeData, 'characterCard'>;
 type CharacterDesignCanvasNode = Node<
@@ -323,6 +382,7 @@ type CharacterDesignCanvasNode = Node<
   'characterDesign'
 >;
 type StyleCardCanvasNode = Node<StyleCardNodeData, 'styleCard'>;
+type StoryboardCardCanvasNode = Node<StoryboardCardNodeData, 'storyboard'>;
 
 type PendingContextSwitch = {
   projectId: string;
@@ -707,6 +767,211 @@ function StyleCardNodeComponent({ data }: NodeProps<StyleCardCanvasNode>) {
               : data.saveState === 'error'
                 ? data.saveMessage || 'Save failed'
                 : data.saveMessage || 'Autosave'}
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+function StoryboardCardNodeComponent({
+  data,
+}: NodeProps<StoryboardCardCanvasNode>) {
+  return (
+    <Card className='relative w-180 border border-border/90 bg-card p-4 shadow-sm'>
+      {data.hasIncomingConnection ? (
+        <>
+          <Handle
+            type='target'
+            id={getTargetHandleId('top')}
+            position={Position.Top}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('right')}
+            position={Position.Right}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('bottom')}
+            position={Position.Bottom}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('left')}
+            position={Position.Left}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+        </>
+      ) : null}
+      {data.hasOutgoingConnection ? (
+        <>
+          <Handle
+            type='source'
+            id={getSourceHandleId('top')}
+            position={Position.Top}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('right')}
+            position={Position.Right}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('bottom')}
+            position={Position.Bottom}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('left')}
+            position={Position.Left}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+        </>
+      ) : null}
+
+      <div className='mb-3'>
+        <input
+          value={data.title}
+          onChange={(event) => data.onTitleChange(event.target.value)}
+          placeholder='Storyboard'
+          className='nodrag nowheel nopan w-full rounded-lg border border-input bg-background px-3 py-2 text-xl font-semibold outline-none'
+        />
+      </div>
+
+      <div className='space-y-4'>
+        {!data.frames.length ? (
+          <div className='rounded-xl border border-dashed border-amber-500/60 bg-amber-50/60 p-4 text-sm text-amber-700'>
+            {data.saveState === 'generating'
+              ? data.saveMessage || 'Generating storyboard descriptions...'
+              : 'No frames yet.'}
+          </div>
+        ) : null}
+        {data.frames.map((frame) => (
+          <div
+            key={`${data.storyboardId}-${frame.frameNumber}`}
+            className='space-y-2 rounded-xl border border-border bg-background/60 p-3'>
+            <p className='text-sm font-semibold text-foreground'>
+              {frame.frameNumber}
+            </p>
+
+            <div className='grid grid-cols-[220px_1fr] gap-3'>
+              <div className='space-y-2'>
+                <div className='flex h-32 items-center justify-center rounded-lg border border-sky-500/70 bg-background text-sm text-sky-700'>
+                  {frame.imageUrl ? (
+                    <img
+                      src={frame.imageUrl}
+                      alt={`Storyboard frame ${frame.frameNumber}`}
+                      className='h-full w-full rounded-md object-cover'
+                      onError={(event) => {
+                        const target = event.currentTarget;
+                        const baseUrl = frame.imageUrl || '';
+                        if (!baseUrl) {
+                          return;
+                        }
+
+                        const retryCount = Number(
+                          target.dataset.retryCount || '0',
+                        );
+                        if (retryCount >= 4) {
+                          return;
+                        }
+
+                        target.dataset.retryCount = String(retryCount + 1);
+                        window.setTimeout(
+                          () => {
+                            const separator = baseUrl.includes('?') ? '&' : '?';
+                            target.src = `${baseUrl}${separator}retry=${Date.now()}`;
+                          },
+                          500 * (retryCount + 1),
+                        );
+                      }}
+                    />
+                  ) : frame.imageStatus === 'pending' ? (
+                    <span className='animate-pulse text-xs text-sky-700'>
+                      Generating image...
+                    </span>
+                  ) : frame.imageStatus === 'failed' ? (
+                    <button
+                      type='button'
+                      className='nodrag rounded px-2 py-1 text-xs text-destructive underline-offset-2 hover:underline'
+                      onClick={() => data.onFrameRetryImage(frame.frameNumber)}>
+                      Image failed. Click to retry.
+                    </button>
+                  ) : (
+                    'Frame image'
+                  )}
+                </div>
+              </div>
+
+              <textarea
+                value={frame.description}
+                onChange={(event) =>
+                  data.onFrameDescriptionChange(
+                    frame.frameNumber,
+                    event.target.value,
+                  )
+                }
+                placeholder='Detailed frame description, camera angle, action, character and design notes.'
+                className='nodrag nowheel nopan min-h-32 w-full resize-y rounded-lg border border-amber-500/70 bg-background px-3 py-2 text-sm leading-relaxed outline-none'
+              />
+            </div>
+
+            <div className='flex items-center justify-between gap-3'>
+              <p className='text-xs text-muted-foreground'>
+                {frame.cameraAngle || frame.cameraMovement
+                  ? `Camera: ${frame.cameraAngle || 'n/a'} / ${frame.cameraMovement || 'static'}`
+                  : 'Camera details are included in description.'}
+              </p>
+              <label className='flex items-center gap-2 text-xs text-rose-600'>
+                Duration
+                <input
+                  type='number'
+                  min={0.1}
+                  step={0.1}
+                  value={
+                    Number.isFinite(frame.durationSeconds)
+                      ? frame.durationSeconds
+                      : 3
+                  }
+                  onChange={(event) =>
+                    data.onFrameDurationChange(
+                      frame.frameNumber,
+                      Number(event.target.value),
+                    )
+                  }
+                  className='nodrag nowheel nopan h-8 w-18 rounded-md border border-input bg-background px-2 text-xs outline-none'
+                />
+              </label>
+            </div>
+          </div>
+        ))}
+
+        <Button
+          type='button'
+          variant='outline'
+          className='nodrag h-12 w-full border-emerald-500 text-emerald-700 hover:bg-emerald-50'
+          onClick={data.onFrameAdd}>
+          + Add Frame
+        </Button>
+      </div>
+
+      <div className='mt-3 flex justify-end'>
+        <p className='text-xs text-muted-foreground'>
+          {data.saveState === 'generating'
+            ? data.saveMessage || 'Generating storyboard...'
+            : data.saveState === 'saving'
+              ? 'Saving...'
+              : data.saveState === 'saved'
+                ? 'Saved'
+                : data.saveState === 'error'
+                  ? data.saveMessage || 'Save failed'
+                  : data.saveMessage || 'Autosave'}
         </p>
       </div>
     </Card>
@@ -1177,6 +1442,155 @@ function buildStyleDraftFromRecord(
   };
 }
 
+function parseStoryboardFrames(shotsJson?: string | null) {
+  if (!shotsJson) {
+    return [] as StoryboardFrameRecord[];
+  }
+
+  try {
+    const parsed = JSON.parse(shotsJson);
+    if (!Array.isArray(parsed)) {
+      return [] as StoryboardFrameRecord[];
+    }
+
+    return parsed
+      .map((item, index): StoryboardFrameRecord | null => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+
+        const record = item as Record<string, unknown>;
+        const description =
+          typeof record.description === 'string'
+            ? record.description.trim()
+            : '';
+
+        const rawImageUrlCandidates = [
+          record.imageUrl,
+          record.imageURL,
+          record.image_url,
+          record.url,
+        ];
+        const imageUrl = rawImageUrlCandidates
+          .map((value) => (typeof value === 'string' ? value.trim() : ''))
+          .find(Boolean);
+
+        const rawImageStatus =
+          typeof record.imageStatus === 'string'
+            ? record.imageStatus.trim().toLowerCase()
+            : typeof record.status === 'string'
+              ? record.status.trim().toLowerCase()
+              : '';
+
+        const imageStatus =
+          rawImageStatus === 'pending' ||
+          rawImageStatus === 'ready' ||
+          rawImageStatus === 'failed'
+            ? rawImageStatus
+            : imageUrl
+              ? 'ready'
+              : description
+                ? 'pending'
+                : undefined;
+
+        const rawCharacters = Array.isArray(record.characters)
+          ? record.characters
+          : [];
+        const characters = rawCharacters
+          .map((entry) => {
+            if (!entry || typeof entry !== 'object') {
+              return null;
+            }
+
+            const character = entry as Record<string, unknown>;
+            const characterName =
+              typeof character.characterName === 'string'
+                ? character.characterName.trim()
+                : '';
+            const action =
+              typeof character.action === 'string'
+                ? character.action.trim()
+                : '';
+            const designCue =
+              typeof character.designCue === 'string'
+                ? character.designCue.trim()
+                : '';
+
+            if (!characterName || !action) {
+              return null;
+            }
+
+            return {
+              characterName,
+              action,
+              designCue,
+            };
+          })
+          .filter(
+            (
+              character,
+            ): character is {
+              characterName: string;
+              action: string;
+              designCue: string;
+            } => Boolean(character),
+          );
+
+        const rawDuration =
+          typeof record.durationSeconds === 'number'
+            ? record.durationSeconds
+            : Number(record.durationSeconds);
+        const durationSeconds =
+          Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : 3;
+
+        const annotations = Array.isArray(record.annotations)
+          ? record.annotations
+              .filter(
+                (annotation): annotation is string =>
+                  typeof annotation === 'string',
+              )
+              .map((annotation) => annotation.trim())
+              .filter(Boolean)
+          : [];
+
+        return {
+          frameNumber: index + 1,
+          description,
+          cameraAngle:
+            typeof record.cameraAngle === 'string'
+              ? record.cameraAngle.trim()
+              : '',
+          cameraMovement:
+            typeof record.cameraMovement === 'string'
+              ? record.cameraMovement.trim()
+              : '',
+          characters,
+          durationSeconds,
+          annotations,
+          ...(imageStatus ? { imageStatus } : {}),
+          ...(imageUrl ? { imageUrl } : {}),
+        };
+      })
+      .filter((frame): frame is StoryboardFrameRecord => Boolean(frame));
+  } catch {
+    return [] as StoryboardFrameRecord[];
+  }
+}
+
+function buildStoryboardDraftFromRecord(
+  storyboardNode: StoryboardNodeRecord,
+): StoryboardDraftState {
+  const frames = parseStoryboardFrames(storyboardNode.shotsJson);
+  return {
+    title: storyboardNode.title || 'Storyboard',
+    frames,
+    saveState: 'idle',
+    saveMessage: 'Autosave',
+    generationPhase: 'completed',
+    isLocalDirty: false,
+  };
+}
+
 function updateCaptionLines(
   current: CaptionLine[],
   speaker: CaptionSpeaker,
@@ -1241,11 +1655,13 @@ const StoryImportNode = memo(StoryImportNodeComponent);
 const CharacterCardNode = memo(CharacterCardNodeComponent);
 const CharacterDesignNode = memo(CharacterDesignNodeComponent);
 const StyleCardNode = memo(StyleCardNodeComponent);
+const StoryboardCardNode = memo(StoryboardCardNodeComponent);
 const FLOW_NODE_TYPES = {
   storyImport: StoryImportNode,
   characterCard: CharacterCardNode,
   characterDesign: CharacterDesignNode,
   styleCard: StyleCardNode,
+  storyboard: StoryboardCardNode,
 };
 
 function extractOutputTranscription(payload: unknown): string | null {
@@ -1435,6 +1851,9 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [styleDrafts, setStyleDrafts] = useState<
     Record<string, StyleDraftState>
   >({});
+  const [storyboardDrafts, setStoryboardDrafts] = useState<
+    Record<string, StoryboardDraftState>
+  >({});
   const [characterDesignUiState, setCharacterDesignUiState] = useState<
     Record<string, CharacterDesignUiState>
   >({});
@@ -1459,6 +1878,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const pendingContextSwitchTimerRef = useRef<number | null>(null);
   const characterAutosaveTimersRef = useRef<Map<string, number>>(new Map());
   const styleAutosaveTimersRef = useRef<Map<string, number>>(new Map());
+  const storyboardAutosaveTimersRef = useRef<Map<string, number>>(new Map());
   const nodePositionSaveTimersRef = useRef<Map<string, number>>(new Map());
   const storyAutosaveTimerRef = useRef<number | null>(null);
   const lastSavedStoryMarkdownRef = useRef('');
@@ -1467,6 +1887,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   >({});
   const characterDraftsRef = useRef<Record<string, CharacterDraftState>>({});
   const styleDraftsRef = useRef<Record<string, StyleDraftState>>({});
+  const storyboardDraftsRef = useRef<Record<string, StoryboardDraftState>>({});
   const nodesRef = useRef<Node<CanvasNodeData>[]>([]);
   const micActiveRef = useRef(false);
   const micStartingRef = useRef(false);
@@ -1622,6 +2043,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   }, [styleDrafts]);
 
   useEffect(() => {
+    storyboardDraftsRef.current = storyboardDrafts;
+  }, [storyboardDrafts]);
+
+  useEffect(() => {
     nodesRef.current = nodes;
   }, [nodes]);
 
@@ -1637,6 +2062,12 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       );
       const characterNodeIds = (projectGraph.characterNodes ?? []).map(
         (node) => `character-${node.id}`,
+      );
+      const characterDesignNodeIds = (projectGraph.characterNodes ?? []).map(
+        (node) => `character-design-${node.id}`,
+      );
+      const storyboardNodeIds = (projectGraph.storyboardNodes ?? []).map(
+        (node) => `storyboard-${node.id}`,
       );
       const storyNodeId = projectGraph.story
         ? `story-${projectGraph.story.id}`
@@ -1728,6 +2159,61 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         });
       });
 
+      storyboardNodeIds.forEach((sourceStoryboardId) => {
+        const sourcePosition = positionById.get(sourceStoryboardId);
+        if (!sourcePosition) {
+          return;
+        }
+
+        if (storyNodeId) {
+          const targetPosition = positionById.get(storyNodeId);
+          if (targetPosition) {
+            const sides = getNearestHandleSides({
+              source: sourcePosition,
+              target: targetPosition,
+            });
+
+            edges.push({
+              id: `edge-${sourceStoryboardId}-to-${storyNodeId}`,
+              source: sourceStoryboardId,
+              target: storyNodeId,
+              sourceHandle: getSourceHandleId(sides.source),
+              targetHandle: getTargetHandleId(sides.target),
+              type: 'smoothstep',
+              animated: true,
+              style: { strokeWidth: 2 },
+              selectable: false,
+              deletable: false,
+            });
+          }
+        }
+
+        characterDesignNodeIds.forEach((targetDesignId) => {
+          const targetPosition = positionById.get(targetDesignId);
+          if (!targetPosition) {
+            return;
+          }
+
+          const sides = getNearestHandleSides({
+            source: sourcePosition,
+            target: targetPosition,
+          });
+
+          edges.push({
+            id: `edge-${sourceStoryboardId}-to-${targetDesignId}`,
+            source: sourceStoryboardId,
+            target: targetDesignId,
+            sourceHandle: getSourceHandleId(sides.source),
+            targetHandle: getTargetHandleId(sides.target),
+            type: 'smoothstep',
+            animated: true,
+            style: { strokeWidth: 2 },
+            selectable: false,
+            deletable: false,
+          });
+        });
+      });
+
       return edges;
     },
     [projectGraph],
@@ -1766,6 +2252,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   useEffect(() => {
     const autosaveTimers = characterAutosaveTimersRef.current;
     const styleAutosaveTimers = styleAutosaveTimersRef.current;
+    const storyboardAutosaveTimers = storyboardAutosaveTimersRef.current;
 
     const client = createAgentSocket({
       projectId: initialProjectIdRef.current || undefined,
@@ -2077,6 +2564,145 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             }
           }
 
+          if (
+            (sourceTool === 'generate_storyboard' ||
+              sourceTool === 'update_storyboard') &&
+            (!statusProjectId || statusProjectId === activeProjectIdRef.current)
+          ) {
+            const phase =
+              payload && typeof payload.phase === 'string'
+                ? payload.phase.trim().toLowerCase()
+                : '';
+            const generationPhase =
+              payload && typeof payload.generationPhase === 'string'
+                ? payload.generationPhase.trim().toLowerCase()
+                : '';
+            const storyboardNodeId =
+              payload && typeof payload.storyboardNodeId === 'string'
+                ? payload.storyboardNodeId.trim()
+                : '';
+
+            const applyToIds = (
+              current: Record<string, StoryboardDraftState>,
+            ) =>
+              storyboardNodeId
+                ? Object.prototype.hasOwnProperty.call(
+                    current,
+                    storyboardNodeId,
+                  )
+                  ? [storyboardNodeId]
+                  : []
+                : Object.keys(current);
+
+            if (phase === 'started') {
+              setStoryboardDrafts((current) => {
+                const ids = applyToIds(current);
+                if (!ids.length) {
+                  return current;
+                }
+
+                const next = { ...current };
+                ids.forEach((id) => {
+                  const draft = next[id];
+                  if (!draft || draft.isLocalDirty) {
+                    return;
+                  }
+
+                  next[id] = {
+                    ...draft,
+                    saveState: 'generating',
+                    saveMessage: statusMessage || 'Generating storyboard...',
+                    generationPhase: 'descriptions',
+                  };
+                });
+                return next;
+              });
+            }
+
+            if (phase === 'descriptions_progress') {
+              setStoryboardDrafts((current) => {
+                const ids = applyToIds(current);
+                if (!ids.length) {
+                  return current;
+                }
+
+                const next = { ...current };
+                ids.forEach((id) => {
+                  const draft = next[id];
+                  if (!draft || draft.isLocalDirty) {
+                    return;
+                  }
+
+                  next[id] = {
+                    ...draft,
+                    saveState: 'generating',
+                    saveMessage:
+                      statusMessage || 'Streaming storyboard descriptions...',
+                    generationPhase: 'descriptions',
+                  };
+                });
+                return next;
+              });
+            }
+
+            if (
+              phase === 'descriptions_completed' ||
+              phase === 'images_started' ||
+              phase === 'images_progress' ||
+              generationPhase === 'images'
+            ) {
+              setStoryboardDrafts((current) => {
+                const ids = applyToIds(current);
+                if (!ids.length) {
+                  return current;
+                }
+
+                const next = { ...current };
+                ids.forEach((id) => {
+                  const draft = next[id];
+                  if (!draft || draft.isLocalDirty) {
+                    return;
+                  }
+
+                  next[id] = {
+                    ...draft,
+                    saveState: 'generating',
+                    saveMessage:
+                      statusMessage ||
+                      'Storyboard descriptions ready. Generating images...',
+                    generationPhase: 'images',
+                  };
+                });
+                return next;
+              });
+            }
+
+            if (phase === 'completed') {
+              setStoryboardDrafts((current) => {
+                const ids = applyToIds(current);
+                if (!ids.length) {
+                  return current;
+                }
+
+                const next = { ...current };
+                ids.forEach((id) => {
+                  const draft = next[id];
+                  if (!draft || draft.isLocalDirty) {
+                    return;
+                  }
+
+                  next[id] = {
+                    ...draft,
+                    saveState: 'idle',
+                    saveMessage: 'Autosave',
+                    generationPhase: 'completed',
+                  };
+                });
+                return next;
+              });
+            }
+          }
+
           return;
         }
 
@@ -2257,6 +2883,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         window.clearTimeout(timerId);
       }
       styleAutosaveTimers.clear();
+
+      for (const timerId of storyboardAutosaveTimers.values()) {
+        window.clearTimeout(timerId);
+      }
+      storyboardAutosaveTimers.clear();
     };
   }, [
     clearPendingContextSwitchTimer,
@@ -2517,6 +3148,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       setProjectGraph(null);
       setNodes([]);
       setCharacterDrafts({});
+      setStoryboardDrafts({});
       setCharacterDesignUiState({});
       for (const timerId of characterAutosaveTimersRef.current.values()) {
         window.clearTimeout(timerId);
@@ -2526,6 +3158,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         window.clearTimeout(timerId);
       }
       styleAutosaveTimersRef.current.clear();
+      for (const timerId of storyboardAutosaveTimersRef.current.values()) {
+        window.clearTimeout(timerId);
+      }
+      storyboardAutosaveTimersRef.current.clear();
       for (const timerId of nodePositionSaveTimersRef.current.values()) {
         window.clearTimeout(timerId);
       }
@@ -2682,6 +3318,49 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           ...derived,
           saveState: existing?.saveState === 'saved' ? 'saved' : 'idle',
           saveMessage: existing?.saveState === 'saved' ? 'Saved' : 'Autosave',
+        };
+      }
+
+      return next;
+    });
+  }, [projectGraph]);
+
+  useEffect(() => {
+    if (!projectGraph?.storyboardNodes?.length) {
+      setStoryboardDrafts({});
+      return;
+    }
+
+    setStoryboardDrafts((current) => {
+      const next: Record<string, StoryboardDraftState> = {};
+
+      for (const storyboardNode of projectGraph.storyboardNodes ?? []) {
+        const existing = current[storyboardNode.id];
+        if (existing?.isLocalDirty) {
+          next[storyboardNode.id] = existing;
+          continue;
+        }
+
+        const derived = buildStoryboardDraftFromRecord(storyboardNode);
+        next[storyboardNode.id] = {
+          ...derived,
+          saveState:
+            existing?.saveState === 'saved'
+              ? 'saved'
+              : existing?.saveState === 'generating'
+                ? 'generating'
+                : 'idle',
+          saveMessage:
+            existing?.saveState === 'saved'
+              ? 'Saved'
+              : existing?.saveState === 'generating'
+                ? existing.saveMessage || 'Generating storyboard...'
+                : 'Autosave',
+          generationPhase:
+            existing?.saveState === 'generating'
+              ? existing.generationPhase || 'descriptions'
+              : 'completed',
+          isLocalDirty: false,
         };
       }
 
@@ -3292,6 +3971,255 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     [queueStyleAutosave],
   );
 
+  const saveStoryboardDraft = useCallback(
+    async (storyboardId: string, draft: StoryboardDraftState) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) {
+        return;
+      }
+
+      setStoryboardDrafts((current) => ({
+        ...current,
+        [storyboardId]: {
+          ...draft,
+          saveState: 'saving',
+          saveMessage: 'Saving...',
+        },
+      }));
+
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/storyboard-nodes/${encodeURIComponent(storyboardId)}`,
+          {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              title: draft.title,
+              frames: draft.frames,
+            }),
+          },
+        );
+
+        const payload = (await response.json()) as
+          | StoryboardNodeUpdateResponse
+          | undefined;
+
+        if (!response.ok || !payload?.ok || !payload.node) {
+          throw new Error(payload?.error || 'Failed to save storyboard.');
+        }
+
+        setStoryboardDrafts((current) => ({
+          ...current,
+          [storyboardId]: {
+            ...draft,
+            saveState: 'saved',
+            saveMessage: 'Saved',
+            isLocalDirty: false,
+          },
+        }));
+
+        setProjectGraph((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const nextStoryboardNodes = (current.storyboardNodes ?? []).map(
+            (node) => (node.id === storyboardId ? payload.node! : node),
+          );
+
+          return {
+            ...current,
+            storyboardNodes: nextStoryboardNodes,
+          };
+        });
+      } catch (error) {
+        setStoryboardDrafts((current) => ({
+          ...current,
+          [storyboardId]: {
+            ...draft,
+            saveState: 'error',
+            saveMessage:
+              error instanceof Error
+                ? error.message
+                : 'Failed to save storyboard.',
+            isLocalDirty: true,
+          },
+        }));
+      }
+    },
+    [activeProjectId],
+  );
+
+  const queueStoryboardAutosave = useCallback(
+    (storyboardId: string) => {
+      const existingTimer =
+        storyboardAutosaveTimersRef.current.get(storyboardId);
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+
+      const nextTimer = window.setTimeout(() => {
+        const latestDraft = storyboardDraftsRef.current[storyboardId];
+        if (!latestDraft) {
+          return;
+        }
+
+        void saveStoryboardDraft(storyboardId, latestDraft);
+        storyboardAutosaveTimersRef.current.delete(storyboardId);
+      }, 700);
+
+      storyboardAutosaveTimersRef.current.set(storyboardId, nextTimer);
+    },
+    [saveStoryboardDraft],
+  );
+
+  const updateStoryboardDraft = useCallback(
+    (
+      storyboardId: string,
+      updater: (draft: StoryboardDraftState) => StoryboardDraftState,
+    ) => {
+      setStoryboardDrafts((current) => {
+        const existing = current[storyboardId];
+        if (!existing) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [storyboardId]: {
+            ...updater(existing),
+            saveState: 'idle',
+            saveMessage: 'Autosave pending...',
+            isLocalDirty: true,
+          },
+        };
+      });
+
+      queueStoryboardAutosave(storyboardId);
+    },
+    [queueStoryboardAutosave],
+  );
+
+  const regenerateStoryboardFrameImage = useCallback(
+    async (storyboardId: string, frameNumber: number) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) {
+        return;
+      }
+
+      setStoryboardDrafts((current) => {
+        const existing = current[storyboardId];
+        if (!existing) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [storyboardId]: {
+            ...existing,
+            saveState: 'generating',
+            saveMessage: `Retrying image for frame ${frameNumber}...`,
+            generationPhase: 'images',
+            isLocalDirty: false,
+            frames: existing.frames.map((frame) =>
+              frame.frameNumber === frameNumber
+                ? {
+                    ...frame,
+                    imageStatus: 'pending',
+                  }
+                : frame,
+            ),
+          },
+        };
+      });
+
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/storyboard-nodes/${encodeURIComponent(storyboardId)}/regenerate-image`,
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ frameNumber }),
+          },
+        );
+
+        const payload = (await response.json()) as
+          | StoryboardImageRegenerateResponse
+          | undefined;
+
+        if (!payload?.node) {
+          throw new Error(payload?.error || 'Failed to regenerate image.');
+        }
+
+        const refreshedDraft = buildStoryboardDraftFromRecord(payload.node);
+
+        setProjectGraph((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const nextStoryboardNodes = (current.storyboardNodes ?? []).map(
+            (node) => (node.id === storyboardId ? payload.node! : node),
+          );
+
+          return {
+            ...current,
+            storyboardNodes: nextStoryboardNodes,
+          };
+        });
+
+        setStoryboardDrafts((current) => ({
+          ...current,
+          [storyboardId]: {
+            ...refreshedDraft,
+            saveState: response.ok ? 'saved' : 'error',
+            saveMessage: response.ok
+              ? 'Image regenerated'
+              : payload.error || 'Image regeneration failed',
+            generationPhase: response.ok ? 'completed' : 'images',
+            isLocalDirty: false,
+          },
+        }));
+      } catch (error) {
+        setStoryboardDrafts((current) => {
+          const existing = current[storyboardId];
+          if (!existing) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [storyboardId]: {
+              ...existing,
+              saveState: 'error',
+              saveMessage:
+                error instanceof Error
+                  ? error.message
+                  : 'Failed to regenerate image.',
+              generationPhase: 'images',
+              isLocalDirty: false,
+              frames: existing.frames.map((frame) =>
+                frame.frameNumber === frameNumber
+                  ? {
+                      ...frame,
+                      imageStatus: 'failed',
+                    }
+                  : frame,
+              ),
+            },
+          };
+        });
+      }
+    },
+    [activeProjectId],
+  );
+
   const deleteNodeFromDatabase = useCallback(
     async (nodeId: string) => {
       const projectId = activeProjectId.trim();
@@ -3490,6 +4418,16 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           if (autosaveTimer) {
             window.clearTimeout(autosaveTimer);
             styleAutosaveTimersRef.current.delete(styleId);
+          }
+        }
+
+        if (id.startsWith('storyboard-')) {
+          const storyboardId = id.replace('storyboard-', '');
+          const autosaveTimer =
+            storyboardAutosaveTimersRef.current.get(storyboardId);
+          if (autosaveTimer) {
+            window.clearTimeout(autosaveTimer);
+            storyboardAutosaveTimersRef.current.delete(storyboardId);
           }
         }
 
@@ -3726,6 +4664,87 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       });
     });
 
+    const storyboardNodes = projectGraph.storyboardNodes ?? [];
+    storyboardNodes.forEach((storyboard, index) => {
+      const derived = buildStoryboardDraftFromRecord(storyboard);
+      const draft = storyboardDrafts[storyboard.id] ?? {
+        ...derived,
+        saveState: 'idle',
+        saveMessage: 'Autosave',
+      };
+
+      nextNodes.push({
+        id: `storyboard-${storyboard.id}`,
+        type: 'storyboard',
+        position: resolveNodePosition(
+          storyboard.positionX,
+          storyboard.positionY,
+          {
+            x: 1320,
+            y: 120 + index * 190,
+          },
+        ),
+        data: {
+          storyboardId: storyboard.id,
+          hasIncomingConnection: false,
+          hasOutgoingConnection: true,
+          title: draft.title,
+          frames: draft.frames,
+          saveState: draft.saveState,
+          saveMessage: draft.saveMessage,
+          onTitleChange: (value: string) => {
+            updateStoryboardDraft(storyboard.id, (existing) => ({
+              ...existing,
+              title: value,
+            }));
+          },
+          onFrameDescriptionChange: (frameNumber: number, value: string) => {
+            updateStoryboardDraft(storyboard.id, (existing) => ({
+              ...existing,
+              frames: existing.frames.map((frame) =>
+                frame.frameNumber === frameNumber
+                  ? { ...frame, description: value }
+                  : frame,
+              ),
+            }));
+          },
+          onFrameDurationChange: (frameNumber: number, value: number) => {
+            const normalizedDuration =
+              Number.isFinite(value) && value > 0 ? value : 0.1;
+            updateStoryboardDraft(storyboard.id, (existing) => ({
+              ...existing,
+              frames: existing.frames.map((frame) =>
+                frame.frameNumber === frameNumber
+                  ? { ...frame, durationSeconds: normalizedDuration }
+                  : frame,
+              ),
+            }));
+          },
+          onFrameRetryImage: (frameNumber: number) => {
+            void regenerateStoryboardFrameImage(storyboard.id, frameNumber);
+          },
+          onFrameAdd: () => {
+            updateStoryboardDraft(storyboard.id, (existing) => ({
+              ...existing,
+              frames: [
+                ...existing.frames,
+                {
+                  frameNumber: existing.frames.length + 1,
+                  description:
+                    'Describe the frame action, camera, and character cues.',
+                  cameraAngle: '',
+                  cameraMovement: '',
+                  characters: [],
+                  durationSeconds: 3,
+                  annotations: [],
+                },
+              ],
+            }));
+          },
+        },
+      });
+    });
+
     const currentPositionById = new Map(
       nodesRef.current.map((node) => [node.id, node.position] as const),
     );
@@ -3740,25 +4759,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         ...node,
         position: existingPosition,
       };
-    });
-
-    const storyboardNodes = projectGraph.storyboardNodes ?? [];
-    storyboardNodes.forEach((storyboard, index) => {
-      nextNodes.push({
-        id: `storyboard-${storyboard.id}`,
-        position: resolveNodePosition(
-          storyboard.positionX,
-          storyboard.positionY,
-          {
-            x: 1320,
-            y: 120 + index * 190,
-          },
-        ),
-        data: {
-          label: storyboard.title,
-          description: 'Storyboard node synced from database.',
-        },
-      });
     });
 
     setNodes(finalNodes);
@@ -3783,8 +4783,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     cancelCharacterDesignEdit,
     editCharacterDesignSelection,
     regenerateCharacterDesign,
+    regenerateStoryboardFrameImage,
     selectCharacterDesign,
+    storyboardDrafts,
     updateCharacterDraftField,
+    updateStoryboardDraft,
     updateStyleDraftField,
   ]);
 
