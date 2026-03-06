@@ -14,8 +14,10 @@ import {
 import type { WSContext } from 'hono/ws';
 import { env } from './env';
 import { handleAgentToolCall } from '../services/agent-router';
-import { getGeminiToolDeclarations } from '../services/tools';
-import { buildActiveAgentSystemInstruction } from '../agents';
+import {
+  buildActiveAgentSystemInstruction,
+  getActiveAgentToolDeclarations,
+} from '../agents';
 import {
   recordActionSent as recordMonitorActionSent,
   recordAgentEnd as recordMonitorAgentEnd,
@@ -53,8 +55,9 @@ type BridgeContext = {
 
 export async function connectGeminiLiveBridge(context: BridgeContext) {
   let session: Session | null = null;
-  const hasActiveProject = Boolean(context.projectId?.trim());
-  const toolDeclarations = getGeminiToolDeclarations(hasActiveProject);
+  const toolDeclarations = getActiveAgentToolDeclarations({
+    projectId: context.projectId,
+  });
 
   session = await ai.live.connect({
     model: env.GEMINI_LIVE_MODEL,
@@ -205,6 +208,54 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
                 ok,
                 result,
               );
+
+              if (
+                toolName === 'set_active_project' &&
+                ok &&
+                result &&
+                typeof result === 'object'
+              ) {
+                const agentContext = (result as Record<string, unknown>)
+                  .agentContext;
+                const nextProjectId =
+                  agentContext && typeof agentContext === 'object'
+                    ? (agentContext as Record<string, unknown>).projectId
+                    : undefined;
+                const activeProject =
+                  (result as Record<string, unknown>).project ?? undefined;
+                const nextProjectName =
+                  activeProject && typeof activeProject === 'object'
+                    ? (activeProject as Record<string, unknown>).name
+                    : undefined;
+
+                if (typeof nextProjectId === 'string' && nextProjectId.trim()) {
+                  context.ws.send(
+                    JSON.stringify({
+                      type: 'agent.context.request',
+                      payload: {
+                        projectId: nextProjectId,
+                        projectName:
+                          typeof nextProjectName === 'string'
+                            ? nextProjectName
+                            : undefined,
+                      },
+                    }),
+                  );
+
+                  recordMonitorActionSent(
+                    context.debugSessionId,
+                    'agent.context.request',
+                    {
+                      projectId: nextProjectId,
+                      projectName:
+                        typeof nextProjectName === 'string'
+                          ? nextProjectName
+                          : undefined,
+                      sourceTool: toolName,
+                    },
+                  );
+                }
+              }
 
               return {
                 id: call.id,

@@ -1,11 +1,19 @@
 import { HomeAgent } from './home-agent';
 import { ProjectAgent } from './project-agent';
 import type { AgentDefinition } from './types';
+import type { FunctionDeclaration } from '@google/genai';
 
 type ActiveAgentInput = {
   projectId?: string;
   activeSubAgents?: string[];
   purpose?: string;
+};
+
+type AgentToolCallInput = {
+  userId: string;
+  projectId?: string;
+  name: string;
+  args?: Record<string, unknown>;
 };
 
 function normalizeAgentName(value: string) {
@@ -38,6 +46,43 @@ export function resolveActiveAgent(input: ActiveAgentInput): AgentDefinition {
   return input.projectId?.trim() ? ProjectAgent : HomeAgent;
 }
 
+export function getActiveAgentToolDeclarations(
+  input: ActiveAgentInput,
+): FunctionDeclaration[] {
+  return resolveActiveAgent(input).toolDeclarations.map((definition) => {
+    const declaration = { ...definition } as FunctionDeclaration & {
+      handler?: unknown;
+    };
+    delete declaration.handler;
+    return declaration;
+  });
+}
+
+export function getAllowedToolNamesForContext(input: ActiveAgentInput) {
+  return getActiveAgentToolDeclarations(input).map(
+    (declaration) => declaration.name,
+  );
+}
+
+export async function runAgentTool(input: AgentToolCallInput) {
+  const activeAgent = resolveActiveAgent({ projectId: input.projectId });
+  const tool = activeAgent.toolDeclarations.find(
+    (definition) => definition.name === input.name,
+  );
+  if (!tool) {
+    return {
+      ok: false,
+      message: `Tool "${input.name}" is not available in ${activeAgent.id} context.`,
+    };
+  }
+
+  return tool.handler({
+    userId: input.userId,
+    projectId: input.projectId,
+    args: input.args ?? {},
+  });
+}
+
 export function buildActiveAgentSystemInstruction(input: ActiveAgentInput) {
   const activeAgent = resolveActiveAgent(input);
   const activeSubAgents = sanitizeActiveSubAgents(input.activeSubAgents);
@@ -60,8 +105,8 @@ export function buildActiveAgentSystemInstruction(input: ActiveAgentInput) {
     'Capabilities to include in that list:',
     ...activeAgent.capabilities,
     ...activeAgent.constraints,
+    ...activeAgent.toolInstructions,
     'When active sub-agents are provided, prioritize those capabilities and mention them explicitly in your response.',
-    'For factual project/account data (for example: what projects exist, project names, counts, recency, story status), call the list_projects tool before answering.',
     'Never invent project names, IDs, counts, timestamps, or tool execution results. If a required tool fails or is unavailable, say so explicitly and ask the user to retry.',
     'Keep responses brief, practical, and action-oriented. Ask one follow-up question when needed.',
   ].join(' ');

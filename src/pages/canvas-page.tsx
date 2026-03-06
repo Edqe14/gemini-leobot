@@ -432,8 +432,48 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           return;
         }
 
+        if (message.type === 'agent.context.request') {
+          const payload =
+            message.payload && typeof message.payload === 'object'
+              ? (message.payload as Record<string, unknown>)
+              : null;
+
+          const requestedProjectId =
+            payload && typeof payload.projectId === 'string'
+              ? payload.projectId
+              : null;
+          const requestedProjectName =
+            payload && typeof payload.projectName === 'string'
+              ? payload.projectName
+              : null;
+
+          if (requestedProjectId && socketClientRef.current) {
+            socketClientRef.current.send({
+              type: 'agent.context',
+              payload: {
+                projectId: requestedProjectId,
+                projectName: requestedProjectName ?? undefined,
+              },
+            });
+
+            if (requestedProjectName?.trim()) {
+              setProjectName(requestedProjectName.trim());
+            }
+          }
+
+          return;
+        }
+
         if (message.type === 'agent.context.updated') {
-          setProjectName('Active project');
+          const payload =
+            message.payload && typeof message.payload === 'object'
+              ? (message.payload as Record<string, unknown>)
+              : null;
+          const activeName =
+            payload && typeof payload.projectName === 'string'
+              ? payload.projectName.trim()
+              : '';
+          setProjectName(activeName || 'Active project');
           return;
         }
 

@@ -1,4 +1,3 @@
-import { Type, type FunctionDeclaration } from '@google/genai';
 import { prisma } from '../lib/db';
 
 type ToolContext = {
@@ -7,106 +6,89 @@ type ToolContext = {
   args: Record<string, unknown>;
 };
 
-const LIST_PROJECTS_DECLARATION: FunctionDeclaration = {
-  name: 'list_projects',
-  description:
-    'List all projects for the authenticated user, including recency and node/story summary metadata.',
-};
+export async function createProjectTool(context: ToolContext) {
+  const rawName = context.args.name;
+  const name = typeof rawName === 'string' ? rawName.trim() : '';
 
-const IMPORT_STORY_MARKDOWN_DECLARATION: FunctionDeclaration = {
-  name: 'import_story_markdown',
-  description:
-    'Import or sync story markdown content into the active project. Use when user asks to import story text or Google Docs content.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      markdown: {
-        type: Type.STRING,
-        description:
-          'Optional markdown content to import. If omitted, backend may use project import flow details.',
-      },
-      sourceUrl: {
-        type: Type.STRING,
-        description:
-          'Optional Google Docs or source URL that contains the story markdown.',
-      },
-    },
-  },
-};
-
-const GENERATE_CHARACTER_BRIEF_DECLARATION: FunctionDeclaration = {
-  name: 'generate_character_brief',
-  description:
-    'Create a character node in the active project using provided name and brief text.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      name: {
-        type: Type.STRING,
-        description: 'Character name to use for the generated node.',
-      },
-      brief: {
-        type: Type.STRING,
-        description: 'Character brief markdown content.',
-      },
-    },
-  },
-};
-
-const GENERATE_CHARACTER_INSPIRATION_DECLARATION: FunctionDeclaration = {
-  name: 'generate_character_inspiration',
-  description:
-    'Create a style/inspiration node for the active project based on provided style direction.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      styleName: {
-        type: Type.STRING,
-        description: 'Short style label for the inspiration node.',
-      },
-      description: {
-        type: Type.STRING,
-        description: 'Visual style description and direction.',
-      },
-    },
-  },
-};
-
-const GENERATE_STORYBOARD_DECLARATION: FunctionDeclaration = {
-  name: 'generate_storyboard',
-  description:
-    'Create a storyboard node for the active project with title and optional shot array.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      title: {
-        type: Type.STRING,
-        description: 'Storyboard title.',
-      },
-      shots: {
-        type: Type.ARRAY,
-        description:
-          'Optional shot list to store in the storyboard node. Each item should be a JSON object.',
-        items: {
-          type: Type.OBJECT,
-        },
-      },
-    },
-  },
-};
-
-export function getGeminiToolDeclarations(hasActiveProject: boolean) {
-  if (!hasActiveProject) {
-    return [LIST_PROJECTS_DECLARATION];
+  if (!name) {
+    return {
+      ok: false,
+      message: 'create_project requires a non-empty "name" argument.',
+    };
   }
 
-  return [
-    LIST_PROJECTS_DECLARATION,
-    IMPORT_STORY_MARKDOWN_DECLARATION,
-    GENERATE_CHARACTER_BRIEF_DECLARATION,
-    GENERATE_CHARACTER_INSPIRATION_DECLARATION,
-    GENERATE_STORYBOARD_DECLARATION,
-  ];
+  if (name.length > 120) {
+    return {
+      ok: false,
+      message: 'Project name must be at most 120 characters.',
+    };
+  }
+
+  const project = await prisma.project.create({
+    data: {
+      userId: context.userId,
+      name,
+    },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return {
+    ok: true,
+    project,
+  };
+}
+
+export async function setActiveProjectTool(context: ToolContext) {
+  const rawProjectId = context.args.projectId;
+  const rawName = context.args.name;
+
+  const projectId = typeof rawProjectId === 'string' ? rawProjectId.trim() : '';
+  const name = typeof rawName === 'string' ? rawName.trim() : '';
+
+  if (!projectId && !name) {
+    return {
+      ok: false,
+      message: 'set_active_project requires either "projectId" or "name".',
+    };
+  }
+
+  const project = await prisma.project.findFirst({
+    where: {
+      userId: context.userId,
+      ...(projectId ? { id: projectId } : { name }),
+    },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      updatedAt: true,
+    },
+  });
+
+  if (!project) {
+    return {
+      ok: false,
+      message: projectId
+        ? `Project "${projectId}" was not found for this user.`
+        : `Project named "${name}" was not found for this user.`,
+    };
+  }
+
+  return {
+    ok: true,
+    message:
+      'Active project resolved. Use agent.context with returned projectId.',
+    project,
+    agentContext: {
+      projectId: project.id,
+    },
+  };
 }
 
 export async function importStoryMarkdownTool(context: ToolContext) {

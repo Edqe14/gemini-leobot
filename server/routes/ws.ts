@@ -26,6 +26,7 @@ type ClientMessage =
       type: 'agent.context';
       payload: {
         projectId?: string;
+        projectName?: string;
         activeSubAgents?: string[];
         purpose?: string;
       };
@@ -116,6 +117,7 @@ export function registerWs(app: Hono) {
       }
 
       let projectId = c.req.query('projectId');
+      let projectName: string | undefined;
       let activeSubAgents: string[] = [];
       let purpose: string | undefined;
       let agentContextKey = createAgentContextKey({ projectId });
@@ -209,9 +211,10 @@ export function registerWs(app: Hono) {
         }
       };
 
-      const enqueueClientContent = (
-        payload: { turns?: unknown[]; turnComplete?: boolean },
-      ) => {
+      const enqueueClientContent = (payload: {
+        turns?: unknown[];
+        turnComplete?: boolean;
+      }) => {
         if (clientContentQueue.length >= MAX_CLIENT_CONTENT_QUEUE_SIZE) {
           clientContentQueue.shift();
           recordActionSent(debugSessionId, 'gemini.clientContent.queue_drop', {
@@ -366,6 +369,8 @@ export function registerWs(app: Hono) {
 
           if (msg.type === 'agent.context') {
             const nextProjectId = msg.payload.projectId;
+            const nextProjectName =
+              msg.payload.projectName?.trim() || undefined;
             const nextActiveSubAgents = sanitizeActiveSubAgents(
               msg.payload.activeSubAgents,
             );
@@ -378,6 +383,7 @@ export function registerWs(app: Hono) {
             });
 
             projectId = nextProjectId;
+            projectName = nextProjectName;
             activeSubAgents = nextActiveSubAgents;
             purpose = nextPurpose;
 
@@ -391,6 +397,7 @@ export function registerWs(app: Hono) {
                 type: 'agent.context.updated',
                 payload: {
                   projectId,
+                  projectName,
                   activeSubAgents,
                   purpose,
                   contextChanged,
@@ -399,6 +406,7 @@ export function registerWs(app: Hono) {
             );
             recordActionSent(debugSessionId, 'agent.context.updated', {
               projectId,
+              projectName,
               activeSubAgents,
               purpose,
               contextChanged,
@@ -450,10 +458,14 @@ export function registerWs(app: Hono) {
 
           if (msg.type === 'gemini.realtimeEnd') {
             if (!geminiBridge?.session) {
-              recordActionSent(debugSessionId, 'gemini.realtimeInput.audio_end.deferred', {
-                reason: msg.payload?.reason ?? 'client_stop',
-                queueSize: realtimeQueue.length,
-              });
+              recordActionSent(
+                debugSessionId,
+                'gemini.realtimeInput.audio_end.deferred',
+                {
+                  reason: msg.payload?.reason ?? 'client_stop',
+                  queueSize: realtimeQueue.length,
+                },
+              );
               return;
             }
 
@@ -505,7 +517,6 @@ export function registerWs(app: Hono) {
             });
             return;
           }
-
         },
         onClose() {
           realtimeQueue.splice(0, realtimeQueue.length);
