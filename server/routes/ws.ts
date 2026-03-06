@@ -39,7 +39,14 @@ type RealtimeAudioChunk = {
   receivedAt: number;
 };
 
+type PendingClientContent = {
+  turns?: unknown[];
+  turnComplete?: boolean;
+  receivedAt: number;
+};
+
 const MAX_AUDIO_QUEUE_SIZE = 240;
+const MAX_CLIENT_CONTENT_QUEUE_SIZE = 24;
 
 function normalizeAgentName(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, '_');
@@ -117,7 +124,9 @@ export function registerWs(app: Hono) {
       > | null = null;
       let debugSessionId = '';
       const realtimeQueue: RealtimeAudioChunk[] = [];
+      const clientContentQueue: PendingClientContent[] = [];
       let drainingQueue = false;
+      let drainingClientContentQueue = false;
       let ingestedAudioChunks = 0;
 
       const enqueueRealtimeChunk = (
@@ -200,6 +209,60 @@ export function registerWs(app: Hono) {
         }
       };
 
+      const enqueueClientContent = (
+        payload: { turns?: unknown[]; turnComplete?: boolean },
+      ) => {
+        if (clientContentQueue.length >= MAX_CLIENT_CONTENT_QUEUE_SIZE) {
+          clientContentQueue.shift();
+          recordActionSent(debugSessionId, 'gemini.clientContent.queue_drop', {
+            maxSize: MAX_CLIENT_CONTENT_QUEUE_SIZE,
+          });
+        }
+
+        clientContentQueue.push({
+          turns: payload.turns,
+          turnComplete: payload.turnComplete,
+          receivedAt: Date.now(),
+        });
+
+        recordActionSent(debugSessionId, 'gemini.clientContent.queued', {
+          queueSize: clientContentQueue.length,
+          turnCount: payload.turns?.length ?? 0,
+          turnComplete: payload.turnComplete,
+        });
+      };
+
+      const drainClientContentQueue = async () => {
+        if (drainingClientContentQueue || !geminiBridge?.session) {
+          return;
+        }
+
+        drainingClientContentQueue = true;
+
+        try {
+          while (clientContentQueue.length > 0 && geminiBridge?.session) {
+            const payload = clientContentQueue.shift();
+            if (!payload) {
+              continue;
+            }
+
+            geminiBridge.session.sendClientContent({
+              turns: payload.turns as never,
+              turnComplete: payload.turnComplete,
+            });
+
+            recordActionSent(debugSessionId, 'gemini.clientContent.forwarded', {
+              queueSize: clientContentQueue.length,
+              turnCount: payload.turns?.length ?? 0,
+              turnComplete: payload.turnComplete,
+              latencyMs: Date.now() - payload.receivedAt,
+            });
+          }
+        } finally {
+          drainingClientContentQueue = false;
+        }
+      };
+
       const connectGeminiForCurrentContext = async (
         ws: WSContext<WebSocket>,
       ) => {
@@ -213,6 +276,7 @@ export function registerWs(app: Hono) {
         });
 
         await drainRealtimeQueue(ws);
+        await drainClientContentQueue();
       };
 
       const rotateGeminiSessionForContext = async (
@@ -386,14 +450,9 @@ export function registerWs(app: Hono) {
 
           if (msg.type === 'gemini.realtimeEnd') {
             if (!geminiBridge?.session) {
-              ws.send(
-                JSON.stringify({
-                  type: 'error',
-                  payload: 'Gemini session not ready',
-                }),
-              );
-              recordActionSent(debugSessionId, 'error', {
-                payload: 'Gemini session not ready',
+              recordActionSent(debugSessionId, 'gemini.realtimeInput.audio_end.deferred', {
+                reason: msg.payload?.reason ?? 'client_stop',
+                queueSize: realtimeQueue.length,
               });
               return;
             }
@@ -417,6 +476,23 @@ export function registerWs(app: Hono) {
             return;
           }
 
+          if (msg.type === 'gemini.clientContent') {
+            if (!geminiBridge?.session) {
+              enqueueClientContent(msg.payload);
+              return;
+            }
+
+            geminiBridge.session.sendClientContent({
+              turns: msg.payload.turns as never,
+              turnComplete: msg.payload.turnComplete,
+            });
+            recordActionSent(debugSessionId, 'gemini.clientContent.forwarded', {
+              turnCount: msg.payload.turns?.length ?? 0,
+              turnComplete: msg.payload.turnComplete,
+            });
+            return;
+          }
+
           if (!geminiBridge?.session) {
             ws.send(
               JSON.stringify({
@@ -430,20 +506,10 @@ export function registerWs(app: Hono) {
             return;
           }
 
-          if (msg.type === 'gemini.clientContent') {
-            geminiBridge.session.sendClientContent({
-              turns: msg.payload.turns as never,
-              turnComplete: msg.payload.turnComplete,
-            });
-            recordActionSent(debugSessionId, 'gemini.clientContent.forwarded', {
-              turnCount: msg.payload.turns?.length ?? 0,
-              turnComplete: msg.payload.turnComplete,
-            });
-            return;
-          }
         },
         onClose() {
           realtimeQueue.splice(0, realtimeQueue.length);
+          clientContentQueue.splice(0, clientContentQueue.length);
           geminiBridge?.close();
           closeDebugSession(debugSessionId, 'ws.closed');
         },
