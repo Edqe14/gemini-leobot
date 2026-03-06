@@ -39,6 +39,8 @@ type CaptionLine = {
   text: string;
 };
 
+const CAPTION_IDLE_CLEAR_MS = 10000;
+
 function mergeCaptionText(previous: string, incoming: string): string {
   const prev = previous.trim();
   const next = incoming.trim();
@@ -220,6 +222,19 @@ function parsePcmRate(mimeType: string): number {
   return parsed;
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  const tagName = target.tagName;
+  return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
+}
+
 function base64ToPcm16(base64Data: string): Int16Array {
   const binary = atob(base64Data);
   const bytes = new Uint8Array(binary.length);
@@ -277,6 +292,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [captionLines, setCaptionLines] = useState<CaptionLine[]>([]);
   const [showInterruptedBadge, setShowInterruptedBadge] = useState(false);
   const [projectName, setProjectName] = useState<string>('No active project');
+  const [debugTextInput, setDebugTextInput] = useState('');
   const socketClientRef = useRef<ReturnType<typeof createAgentSocket> | null>(
     null,
   );
@@ -290,6 +306,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const playbackCursorRef = useRef(0);
   const playbackSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const interruptedBadgeTimerRef = useRef<number | null>(null);
+  const captionClearTimerRef = useRef<number | null>(null);
+  const micActiveRef = useRef(false);
+  const micStartingRef = useRef(false);
+  const pttHeldRef = useRef(false);
+  const pttMicActivatedRef = useRef(false);
 
   const interruptPlayback = useCallback(() => {
     const activeSources = playbackSourcesRef.current;
@@ -356,6 +377,22 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (captionClearTimerRef.current) {
+      window.clearTimeout(captionClearTimerRef.current);
+      captionClearTimerRef.current = null;
+    }
+
+    if (!captionLines.length) {
+      return;
+    }
+
+    captionClearTimerRef.current = window.setTimeout(() => {
+      setCaptionLines([]);
+      captionClearTimerRef.current = null;
+    }, CAPTION_IDLE_CLEAR_MS);
+  }, [captionLines]);
 
   useEffect(() => {
     const client = createAgentSocket({
@@ -531,6 +568,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         window.clearTimeout(interruptedBadgeTimerRef.current);
         interruptedBadgeTimerRef.current = null;
       }
+
+      if (captionClearTimerRef.current) {
+        window.clearTimeout(captionClearTimerRef.current);
+        captionClearTimerRef.current = null;
+      }
     };
   }, [interruptPlayback, notifyInterrupted]);
 
@@ -558,6 +600,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     mediaStreamRef.current = null;
     setMicActive(false);
   }, [interruptPlayback]);
+
+  useEffect(() => {
+    micActiveRef.current = micActive;
+  }, [micActive]);
 
   const bytesToBase64 = (bytes: Uint8Array) => {
     let binary = '';
@@ -624,88 +670,107 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     return new Uint8Array(pcm16.buffer);
   };
 
-  const startMicCapture = async () => {
-    setMicError('');
-    setSentChunks(0);
-    setIngestedChunks(0);
-
-    try {
-      if (!connected) {
-        throw new Error('Voice socket is not connected yet.');
+  const startMicCapture = useCallback(
+    async (options?: { requirePttHeld?: boolean }) => {
+      if (micActiveRef.current || micStartingRef.current) {
+        return;
       }
 
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('Microphone capture is not supported in this browser.');
-      }
+      micStartingRef.current = true;
+      setMicError('');
+      setSentChunks(0);
+      setIngestedChunks(0);
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 48000,
-          sampleSize: 16,
-          noiseSuppression: true,
-          echoCancellation: true,
-          autoGainControl: true,
-        },
-      });
-      mediaStreamRef.current = stream;
+      try {
+        if (!connected) {
+          throw new Error('Voice socket is not connected yet.');
+        }
 
-      const audioContext = new window.AudioContext();
-      await audioContext.resume();
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error(
+            'Microphone capture is not supported in this browser.',
+          );
+        }
 
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      const sinkGain = audioContext.createGain();
-      const loopbackGain = audioContext.createGain();
-      sinkGain.gain.value = 0;
-      loopbackGain.gain.value = loopbackEnabled ? 1 : 0;
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 48000,
+            sampleSize: 16,
+            noiseSuppression: true,
+            echoCancellation: true,
+            autoGainControl: true,
+          },
+        });
 
-      source.connect(processor);
-      processor.connect(sinkGain);
-      sinkGain.connect(audioContext.destination);
-      source.connect(loopbackGain);
-      loopbackGain.connect(audioContext.destination);
-
-      audioContextRef.current = audioContext;
-      sourceNodeRef.current = source;
-      processorNodeRef.current = processor;
-      sinkGainNodeRef.current = sinkGain;
-      loopbackGainNodeRef.current = loopbackGain;
-
-      processor.onaudioprocess = (event) => {
-        const channelData = event.inputBuffer.getChannelData(0);
-        if (!channelData || channelData.length === 0) {
+        // Avoid getting stuck if key-up happens while permissions are pending.
+        if (options?.requirePttHeld && !pttHeldRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
           return;
         }
 
-        const downsampled = downsampleTo16k(
-          channelData,
-          audioContext.sampleRate,
-        );
-        const pcmBytes = convertToPcm16(downsampled);
-        const data = bytesToBase64(pcmBytes);
+        mediaStreamRef.current = stream;
 
-        socketClientRef.current?.send({
-          type: 'gemini.realtimeInput',
-          payload: {
-            media: {
-              mimeType: 'audio/pcm;rate=16000',
-              data,
+        const audioContext = new window.AudioContext();
+        await audioContext.resume();
+
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        const sinkGain = audioContext.createGain();
+        const loopbackGain = audioContext.createGain();
+        sinkGain.gain.value = 0;
+        loopbackGain.gain.value = loopbackEnabled ? 1 : 0;
+
+        source.connect(processor);
+        processor.connect(sinkGain);
+        sinkGain.connect(audioContext.destination);
+        source.connect(loopbackGain);
+        loopbackGain.connect(audioContext.destination);
+
+        audioContextRef.current = audioContext;
+        sourceNodeRef.current = source;
+        processorNodeRef.current = processor;
+        sinkGainNodeRef.current = sinkGain;
+        loopbackGainNodeRef.current = loopbackGain;
+
+        processor.onaudioprocess = (event) => {
+          const channelData = event.inputBuffer.getChannelData(0);
+          if (!channelData || channelData.length === 0) {
+            return;
+          }
+
+          const downsampled = downsampleTo16k(
+            channelData,
+            audioContext.sampleRate,
+          );
+          const pcmBytes = convertToPcm16(downsampled);
+          const data = bytesToBase64(pcmBytes);
+
+          socketClientRef.current?.send({
+            type: 'gemini.realtimeInput',
+            payload: {
+              media: {
+                mimeType: 'audio/pcm;rate=16000',
+                data,
+              },
             },
-          },
-        });
-        setSentChunks((value) => value + 1);
-      };
-      setMicActive(true);
-    } catch (error) {
-      stopMicCapture();
-      setMicError(
-        error instanceof Error
-          ? error.message
-          : 'Failed to start microphone capture.',
-      );
-    }
-  };
+          });
+          setSentChunks((value) => value + 1);
+        };
+        setMicActive(true);
+      } catch (error) {
+        stopMicCapture();
+        setMicError(
+          error instanceof Error
+            ? error.message
+            : 'Failed to start microphone capture.',
+        );
+      } finally {
+        micStartingRef.current = false;
+      }
+    },
+    [connected, loopbackEnabled, stopMicCapture],
+  );
 
   useEffect(() => {
     const loopbackGain = loopbackGainNodeRef.current;
@@ -724,6 +789,105 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
     await startMicCapture();
   };
+
+  const sendDebugTextInput = useCallback(() => {
+    const text = debugTextInput.trim();
+    if (!text) {
+      return;
+    }
+
+    if (!connected) {
+      setMicError('Voice socket is not connected yet.');
+      return;
+    }
+
+    socketClientRef.current?.send({
+      type: 'gemini.clientContent',
+      payload: {
+        turns: [
+          {
+            role: 'user',
+            parts: [{ text }],
+          },
+        ],
+        turnComplete: true,
+      },
+    });
+
+    setCaptionLines((value) => updateCaptionLines(value, 'You', text));
+
+    setDebugTextInput('');
+    setMicError('');
+  }, [connected, debugTextInput]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || event.repeat) {
+        return;
+      }
+
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      if (micActiveRef.current || pttHeldRef.current) {
+        return;
+      }
+
+      pttHeldRef.current = true;
+      pttMicActivatedRef.current = true;
+      event.preventDefault();
+      void startMicCapture({ requirePttHeld: true });
+    };
+
+    const releasePtt = () => {
+      if (!pttHeldRef.current) {
+        return;
+      }
+
+      pttHeldRef.current = false;
+
+      if (!pttMicActivatedRef.current) {
+        return;
+      }
+
+      pttMicActivatedRef.current = false;
+      if (micActiveRef.current) {
+        stopMicCapture();
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== 'Space') {
+        return;
+      }
+
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      event.preventDefault();
+      releasePtt();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        releasePtt();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', releasePtt);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', releasePtt);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [startMicCapture, stopMicCapture]);
 
   useEffect(() => {
     if (!connected && micActive) {
@@ -833,6 +997,35 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           <p className='mt-1 text-center text-xs text-muted-foreground'>
             chunks sent: {sentChunks} • backend ingested: {ingestedChunks}
           </p>
+          {debugOverlayEnabled ? (
+            <div className='mt-3 flex items-center gap-2'>
+              <input
+                type='text'
+                value={debugTextInput}
+                onChange={(event) => setDebugTextInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    sendDebugTextInput();
+                  }
+                }}
+                placeholder='Debug: type instead of talking'
+                className='h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm'
+              />
+              <Button
+                variant='outline'
+                className='h-9 rounded-md'
+                disabled={!debugTextInput.trim() || !connected}
+                onClick={sendDebugTextInput}>
+                Send
+              </Button>
+            </div>
+          ) : null}
+          {!micActive ? (
+            <p className='mt-1 text-center text-xs text-muted-foreground'>
+              Hold Space to push-to-talk
+            </p>
+          ) : null}
           {micError ? (
             <p className='mt-1 text-center text-xs text-muted-foreground'>
               {micError}
