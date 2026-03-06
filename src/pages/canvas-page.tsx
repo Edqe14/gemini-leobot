@@ -39,7 +39,20 @@ type CaptionLine = {
   text: string;
 };
 
+type PendingContextSwitch = {
+  projectId: string;
+  projectName?: string;
+  assistantAudioStarted: boolean;
+  signalExtended: boolean;
+  requestedAt: number;
+  deadlineAt: number;
+};
+
 const CAPTION_IDLE_CLEAR_MS = 10000;
+const CONTEXT_SWITCH_RETRY_MS = 320;
+const CONTEXT_SWITCH_TIMEOUT_MS = 8000;
+const CONTEXT_SWITCH_HARD_TIMEOUT_MS = 12000;
+const CONTEXT_SWITCH_SIGNAL_EXTENSION_MS = 4000;
 
 function mergeCaptionText(previous: string, incoming: string): string {
   const prev = previous.trim();
@@ -85,7 +98,6 @@ function updateCaptionLines(
     next.push({ speaker, text: trimmed });
     return next.slice(-12);
   }
-
   const merged = mergeCaptionText(last.text, trimmed);
   if (merged === last.text) {
     return next;
@@ -307,10 +319,66 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const playbackSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const interruptedBadgeTimerRef = useRef<number | null>(null);
   const captionClearTimerRef = useRef<number | null>(null);
+  const pendingContextSwitchRef = useRef<PendingContextSwitch | null>(null);
+  const pendingContextSwitchTimerRef = useRef<number | null>(null);
   const micActiveRef = useRef(false);
   const micStartingRef = useRef(false);
   const pttHeldRef = useRef(false);
   const pttMicActivatedRef = useRef(false);
+
+  const clearPendingContextSwitchTimer = useCallback(() => {
+    if (pendingContextSwitchTimerRef.current) {
+      window.clearTimeout(pendingContextSwitchTimerRef.current);
+      pendingContextSwitchTimerRef.current = null;
+    }
+  }, []);
+
+  const flushPendingContextSwitch = useCallback(() => {
+    const pending = pendingContextSwitchRef.current;
+    if (!pending || !socketClientRef.current) {
+      return;
+    }
+
+    socketClientRef.current.send({
+      type: 'agent.context',
+      payload: {
+        projectId: pending.projectId,
+        projectName: pending.projectName,
+      },
+    });
+
+    pendingContextSwitchRef.current = null;
+    clearPendingContextSwitchTimer();
+  }, [clearPendingContextSwitchTimer]);
+
+  const schedulePendingContextSwitchCheck = useCallback(() => {
+    clearPendingContextSwitchTimer();
+
+    pendingContextSwitchTimerRef.current = window.setTimeout(() => {
+      const pending = pendingContextSwitchRef.current;
+      if (!pending) {
+        return;
+      }
+
+      if (pending.assistantAudioStarted) {
+        if (playbackSourcesRef.current.size > 0) {
+          schedulePendingContextSwitchCheck();
+          return;
+        }
+
+        flushPendingContextSwitch();
+        return;
+      }
+
+      const timedOut = Date.now() >= pending.deadlineAt;
+      if (!timedOut) {
+        schedulePendingContextSwitchCheck();
+        return;
+      }
+
+      flushPendingContextSwitch();
+    }, CONTEXT_SWITCH_RETRY_MS);
+  }, [clearPendingContextSwitchTimer, flushPendingContextSwitch]);
 
   const interruptPlayback = useCallback(() => {
     const activeSources = playbackSourcesRef.current;
@@ -447,18 +515,20 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
               ? payload.projectName
               : null;
 
-          if (requestedProjectId && socketClientRef.current) {
-            socketClientRef.current.send({
-              type: 'agent.context',
-              payload: {
-                projectId: requestedProjectId,
-                projectName: requestedProjectName ?? undefined,
-              },
-            });
+          if (requestedProjectId) {
+            const pendingName = requestedProjectName?.trim();
+            setProjectName(pendingName || 'Active project');
 
-            if (requestedProjectName?.trim()) {
-              setProjectName(requestedProjectName.trim());
-            }
+            pendingContextSwitchRef.current = {
+              projectId: requestedProjectId,
+              projectName: pendingName || undefined,
+              assistantAudioStarted: false,
+              signalExtended: false,
+              requestedAt: Date.now(),
+              deadlineAt: Date.now() + CONTEXT_SWITCH_TIMEOUT_MS,
+            };
+
+            schedulePendingContextSwitchCheck();
           }
 
           return;
@@ -497,6 +567,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
               const didInterrupt = interruptPlayback();
               if (didInterrupt) {
                 notifyInterrupted();
+                flushPendingContextSwitch();
               }
             }
           }
@@ -512,6 +583,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
               const didInterrupt = interruptPlayback();
               if (didInterrupt) {
                 notifyInterrupted();
+                flushPendingContextSwitch();
               }
             }
           }
@@ -529,8 +601,31 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           }
 
           const chunks = extractAudioChunks(payload);
+          const pendingContextSwitch = pendingContextSwitchRef.current;
+          if (
+            pendingContextSwitch &&
+            !pendingContextSwitch.assistantAudioStarted &&
+            !pendingContextSwitch.signalExtended &&
+            (Boolean(transcription) || chunks.length > 0)
+          ) {
+            const hardDeadline =
+              pendingContextSwitch.requestedAt + CONTEXT_SWITCH_HARD_TIMEOUT_MS;
+            const candidateDeadline =
+              Date.now() + CONTEXT_SWITCH_SIGNAL_EXTENSION_MS;
+            const nextDeadline = Math.min(hardDeadline, candidateDeadline);
+
+            if (nextDeadline > pendingContextSwitch.deadlineAt) {
+              pendingContextSwitch.deadlineAt = nextDeadline;
+              pendingContextSwitch.signalExtended = true;
+            }
+          }
+
           if (!chunks.length) {
             return;
+          }
+
+          if (pendingContextSwitchRef.current) {
+            pendingContextSwitchRef.current.assistantAudioStarted = true;
           }
 
           if (!playbackContextRef.current) {
@@ -567,6 +662,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             source.onended = () => {
               source.disconnect();
               playbackSourcesRef.current.delete(source);
+
+              if (playbackSourcesRef.current.size === 0) {
+                schedulePendingContextSwitchCheck();
+              }
             };
 
             const startAt = Math.max(
@@ -585,6 +684,8 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     return () => {
       client.close();
       socketClientRef.current = null;
+      pendingContextSwitchRef.current = null;
+      clearPendingContextSwitchTimer();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
 
@@ -614,7 +715,13 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         captionClearTimerRef.current = null;
       }
     };
-  }, [interruptPlayback, notifyInterrupted]);
+  }, [
+    clearPendingContextSwitchTimer,
+    flushPendingContextSwitch,
+    interruptPlayback,
+    notifyInterrupted,
+    schedulePendingContextSwitchCheck,
+  ]);
 
   const stopMicCapture = useCallback(() => {
     interruptPlayback();
