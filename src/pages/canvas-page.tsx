@@ -57,6 +57,18 @@ type CharacterNodeRecord = {
   id: string;
   name: string;
   briefMarkdown: string;
+  profileJson?: string | null;
+};
+
+type CharacterProfileRecord = {
+  description?: string;
+  headImageUrl?: string;
+  behavior?: string;
+  style?: string;
+  personality?: string;
+  goals?: string;
+  notes?: string;
+  attributes?: Record<string, string>;
 };
 
 type StyleNodeRecord = {
@@ -88,6 +100,22 @@ type StoryImportResponse = {
   error?: string;
 };
 
+type CharacterSaveState = 'idle' | 'saving' | 'saved' | 'error';
+
+type CharacterNodeUpdateResponse = {
+  ok?: boolean;
+  node?: CharacterNodeRecord;
+  error?: string;
+};
+
+type CharacterDraftState = {
+  name: string;
+  description: string;
+  traitsText: string;
+  saveState: CharacterSaveState;
+  saveMessage?: string;
+};
+
 type StoryImportMode = 'markdown' | 'google_docs';
 
 type StoryImportNodeData = {
@@ -105,8 +133,24 @@ type StoryImportNodeData = {
   onFetchGoogleDocs: () => void;
 };
 
-type CanvasNodeData = CreativeNodeData | StoryImportNodeData;
+type CharacterCardNodeData = {
+  characterId: string;
+  name: string;
+  description: string;
+  traitsText: string;
+  saveState: CharacterSaveState;
+  saveMessage?: string;
+  onNameChange: (value: string) => void;
+  onDescriptionChange: (value: string) => void;
+  onTraitsChange: (value: string) => void;
+};
+
+type CanvasNodeData =
+  | CreativeNodeData
+  | StoryImportNodeData
+  | CharacterCardNodeData;
 type StoryImportCanvasNode = Node<StoryImportNodeData, 'storyImport'>;
+type CharacterCardCanvasNode = Node<CharacterCardNodeData, 'characterCard'>;
 
 type PendingContextSwitch = {
   projectId: string;
@@ -212,6 +256,57 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
   );
 }
 
+function CharacterCardNodeComponent({
+  data,
+}: NodeProps<CharacterCardCanvasNode>) {
+  return (
+    <Card className='w-115 border border-border/90 bg-card p-4 shadow-sm'>
+      <div className='space-y-3'>
+        <div className='rounded-xl border border-border bg-background px-4 py-3'>
+          <input
+            value={data.name}
+            onChange={(event) => data.onNameChange(event.target.value)}
+            placeholder='Character name'
+            className='nodrag nowheel nopan w-full border-0 bg-transparent text-center text-lg font-semibold leading-tight outline-none'
+          />
+        </div>
+        <div className='min-h-22 rounded-xl border border-border bg-background px-4 py-3'>
+          <textarea
+            value={data.description}
+            onChange={(event) => data.onDescriptionChange(event.target.value)}
+            placeholder='Short description of who this character is'
+            className='nodrag nowheel nopan min-h-16 w-full resize-y border-0 bg-transparent text-sm leading-snug text-foreground/90 outline-none'
+          />
+        </div>
+      </div>
+
+      <div className='mt-4 min-h-52 rounded-xl border border-border bg-background px-4 py-4'>
+        <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
+          Character Traits, Behaviour, Style
+        </p>
+        <textarea
+          value={data.traitsText}
+          onChange={(event) => data.onTraitsChange(event.target.value)}
+          placeholder='Behavior: ...\nStyle: ...\nPersonality: ...\nGoals: ...\nNotes: ...'
+          className='nodrag nowheel nopan min-h-44 w-full resize-y border-0 bg-transparent font-mono text-sm leading-relaxed text-foreground/90 outline-none'
+        />
+      </div>
+
+      <div className='mt-3 flex justify-end'>
+        <p className='text-xs text-muted-foreground'>
+          {data.saveState === 'saving'
+            ? 'Saving...'
+            : data.saveState === 'saved'
+              ? 'Saved'
+              : data.saveState === 'error'
+                ? data.saveMessage || 'Save failed'
+                : data.saveMessage || 'Autosave'}
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 function mergeCaptionText(previous: string, incoming: string): string {
   const prev = previous.trim();
   const next = incoming.trim();
@@ -237,6 +332,86 @@ function mergeCaptionText(previous: string, incoming: string): string {
   }
 
   return `${prev} ${next}`;
+}
+
+function parseCharacterProfile(profileJson?: string | null) {
+  if (!profileJson) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(profileJson);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    return parsed as CharacterProfileRecord;
+  } catch {
+    return null;
+  }
+}
+
+function buildCharacterTraitsText(profile: CharacterProfileRecord | null) {
+  if (!profile) {
+    return '';
+  }
+
+  const lines = [
+    ['Behavior', profile.behavior],
+    ['Style', profile.style],
+    ['Personality', profile.personality],
+    ['Goals', profile.goals],
+    ['Notes', profile.notes],
+  ]
+    .filter(([, value]) => typeof value === 'string' && value.trim())
+    .map(([label, value]) => `${label}: ${String(value).trim()}`);
+
+  if (profile.attributes && typeof profile.attributes === 'object') {
+    Object.entries(profile.attributes).forEach(([key, value]) => {
+      const normalizedKey = key.trim();
+      const normalizedValue = String(value ?? '').trim();
+      if (!normalizedKey || !normalizedValue) {
+        return;
+      }
+
+      lines.push(`${normalizedKey}: ${normalizedValue}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
+function extractCharacterDescription(
+  briefMarkdown: string,
+  profile: CharacterProfileRecord | null,
+) {
+  if (profile?.description && profile.description.trim()) {
+    return profile.description.trim();
+  }
+
+  const normalized = briefMarkdown.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const firstParagraph = normalized.split(/\n\s*\n/)[0] ?? '';
+  const cleaned = firstParagraph
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('- **'))
+    .join(' ')
+    .trim();
+
+  return cleaned;
+}
+
+function buildCharacterDraftFromRecord(character: CharacterNodeRecord) {
+  const profile = parseCharacterProfile(character.profileJson);
+
+  return {
+    name: character.name,
+    description: extractCharacterDescription(character.briefMarkdown, profile),
+    traitsText: buildCharacterTraitsText(profile),
+  };
 }
 
 function updateCaptionLines(
@@ -300,7 +475,11 @@ function extractAudioChunks(payload: unknown): AudioChunk[] {
 }
 
 const StoryImportNode = memo(StoryImportNodeComponent);
-const FLOW_NODE_TYPES = { storyImport: StoryImportNode };
+const CharacterCardNode = memo(CharacterCardNodeComponent);
+const FLOW_NODE_TYPES = {
+  storyImport: StoryImportNode,
+  characterCard: CharacterCardNode,
+};
 
 function extractOutputTranscription(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') {
@@ -483,6 +662,9 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     null,
   );
   const [projectGraphRefreshToken, setProjectGraphRefreshToken] = useState(0);
+  const [characterDrafts, setCharacterDrafts] = useState<
+    Record<string, CharacterDraftState>
+  >({});
   const [debugTextInput, setDebugTextInput] = useState('');
   const initialProjectIdRef = useRef(activeProjectId);
   const activeProjectIdRef = useRef(activeProjectId);
@@ -502,6 +684,8 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const captionClearTimerRef = useRef<number | null>(null);
   const pendingContextSwitchRef = useRef<PendingContextSwitch | null>(null);
   const pendingContextSwitchTimerRef = useRef<number | null>(null);
+  const characterAutosaveTimersRef = useRef<Map<string, number>>(new Map());
+  const characterDraftsRef = useRef<Record<string, CharacterDraftState>>({});
   const micActiveRef = useRef(false);
   const micStartingRef = useRef(false);
   const pttHeldRef = useRef(false);
@@ -648,6 +832,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   }, [activeProjectId]);
 
   useEffect(() => {
+    characterDraftsRef.current = characterDrafts;
+  }, [characterDrafts]);
+
+  useEffect(() => {
     const projectIdFromUrl = getProjectIdFromSearch(location.search);
     setActiveProjectId(projectIdFromUrl);
   }, [location.search]);
@@ -678,6 +866,8 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   }, [activeProjectId, location.pathname, location.search, navigate]);
 
   useEffect(() => {
+    const autosaveTimers = characterAutosaveTimersRef.current;
+
     const client = createAgentSocket({
       projectId: initialProjectIdRef.current || undefined,
       onOpen: () => {
@@ -956,6 +1146,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         window.clearTimeout(captionClearTimerRef.current);
         captionClearTimerRef.current = null;
       }
+
+      for (const timerId of autosaveTimers.values()) {
+        window.clearTimeout(timerId);
+      }
+      autosaveTimers.clear();
     };
   }, [
     clearPendingContextSwitchTimer,
@@ -1215,6 +1410,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       setProjectName('No active project');
       setProjectGraph(null);
       setNodes([]);
+      setCharacterDrafts({});
+      for (const timerId of characterAutosaveTimersRef.current.values()) {
+        window.clearTimeout(timerId);
+      }
+      characterAutosaveTimersRef.current.clear();
       setStoryMarkdownInput('');
       setStoryGoogleDocUrl('');
       setStoryImportStatus('');
@@ -1268,6 +1468,39 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       cancelled = true;
     };
   }, [activeProjectId, projectGraphRefreshToken, setNodes]);
+
+  useEffect(() => {
+    if (!projectGraph?.characterNodes?.length) {
+      setCharacterDrafts({});
+      return;
+    }
+
+    setCharacterDrafts((current) => {
+      const next: Record<string, CharacterDraftState> = {};
+
+      for (const character of projectGraph.characterNodes ?? []) {
+        const existing = current[character.id];
+        if (
+          existing &&
+          (existing.saveState === 'saving' || existing.saveState === 'error')
+        ) {
+          next[character.id] = existing;
+          continue;
+        }
+
+        const derived = buildCharacterDraftFromRecord(character);
+        next[character.id] = {
+          name: derived.name,
+          description: derived.description,
+          traitsText: derived.traitsText,
+          saveState: existing?.saveState === 'saved' ? 'saved' : 'idle',
+          saveMessage: existing?.saveState === 'saved' ? 'Saved' : 'Autosave',
+        };
+      }
+
+      return next;
+    });
+  }, [projectGraph]);
 
   const importStoryForActiveProject = useCallback(
     async (mode: StoryImportMode) => {
@@ -1338,6 +1571,139 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       }
     },
     [activeProjectId, storyGoogleDocUrl, storyMarkdownInput],
+  );
+
+  const saveCharacterDraft = useCallback(
+    async (characterId: string, draft: CharacterDraftState) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) {
+        return;
+      }
+
+      setCharacterDrafts((current) => ({
+        ...current,
+        [characterId]: {
+          ...draft,
+          saveState: 'saving',
+          saveMessage: 'Saving...',
+        },
+      }));
+
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/character-nodes/${encodeURIComponent(characterId)}`,
+          {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              name: draft.name,
+              description: draft.description,
+              traitsText: draft.traitsText,
+            }),
+          },
+        );
+
+        const payload = (await response.json()) as
+          | CharacterNodeUpdateResponse
+          | undefined;
+
+        if (!response.ok || !payload?.ok || !payload.node) {
+          throw new Error(
+            payload?.error || 'Failed to save character changes.',
+          );
+        }
+
+        setCharacterDrafts((current) => ({
+          ...current,
+          [characterId]: {
+            ...draft,
+            saveState: 'saved',
+            saveMessage: 'Saved',
+          },
+        }));
+
+        setProjectGraph((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const nextCharacterNodes = (current.characterNodes ?? []).map(
+            (node) => (node.id === characterId ? payload.node! : node),
+          );
+
+          return {
+            ...current,
+            characterNodes: nextCharacterNodes,
+          };
+        });
+      } catch (error) {
+        setCharacterDrafts((current) => ({
+          ...current,
+          [characterId]: {
+            ...draft,
+            saveState: 'error',
+            saveMessage:
+              error instanceof Error
+                ? error.message
+                : 'Failed to save character changes.',
+          },
+        }));
+      }
+    },
+    [activeProjectId],
+  );
+
+  const queueCharacterAutosave = useCallback(
+    (characterId: string) => {
+      const existingTimer = characterAutosaveTimersRef.current.get(characterId);
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+
+      const nextTimer = window.setTimeout(() => {
+        const latestDraft = characterDraftsRef.current[characterId];
+        if (!latestDraft) {
+          return;
+        }
+
+        void saveCharacterDraft(characterId, latestDraft);
+        characterAutosaveTimersRef.current.delete(characterId);
+      }, 700);
+
+      characterAutosaveTimersRef.current.set(characterId, nextTimer);
+    },
+    [saveCharacterDraft],
+  );
+
+  const updateCharacterDraftField = useCallback(
+    (
+      characterId: string,
+      field: 'name' | 'description' | 'traitsText',
+      value: string,
+    ) => {
+      setCharacterDrafts((current) => {
+        const existing = current[characterId];
+        if (!existing) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [characterId]: {
+            ...existing,
+            [field]: value,
+            saveState: 'idle',
+            saveMessage: 'Autosave pending...',
+          },
+        };
+      });
+
+      queueCharacterAutosave(characterId);
+    },
+    [queueCharacterAutosave],
   );
 
   const deleteNodeFromDatabase = useCallback(
@@ -1443,12 +1809,32 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
     const characterNodes = projectGraph.characterNodes ?? [];
     characterNodes.forEach((character, index) => {
+      const derived = buildCharacterDraftFromRecord(character);
+      const draft = characterDrafts[character.id] ?? {
+        name: derived.name,
+        description: derived.description,
+        traitsText: derived.traitsText,
+        saveState: 'idle',
+        saveMessage: 'Autosave',
+      };
+
       nextNodes.push({
         id: `character-${character.id}`,
-        position: { x: 640, y: 120 + index * 190 },
+        type: 'characterCard',
+        position: { x: 640, y: 120 + index * 440 },
         data: {
-          label: character.name,
-          description: character.briefMarkdown,
+          characterId: character.id,
+          name: draft.name,
+          description: draft.description,
+          traitsText: draft.traitsText,
+          saveState: draft.saveState,
+          saveMessage: draft.saveMessage,
+          onNameChange: (value: string) =>
+            updateCharacterDraftField(character.id, 'name', value),
+          onDescriptionChange: (value: string) =>
+            updateCharacterDraftField(character.id, 'description', value),
+          onTraitsChange: (value: string) =>
+            updateCharacterDraftField(character.id, 'traitsText', value),
         },
       });
     });
@@ -1505,6 +1891,8 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     storyImportMode,
     storyImportStatus,
     storyMarkdownInput,
+    characterDrafts,
+    updateCharacterDraftField,
   ]);
 
   useEffect(() => {

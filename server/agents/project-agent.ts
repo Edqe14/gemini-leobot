@@ -74,17 +74,103 @@ export const ProjectAgent: AgentDefinition = {
     {
       name: 'generate_character_brief',
       description:
-        'Create a character node in the active project using provided name and brief text.',
+        'Create one or more character brief nodes in the active project, including behavior/style/personality details.',
       parameters: {
         type: Type.OBJECT,
         properties: {
+          characters: {
+            type: Type.ARRAY,
+            description:
+              'Preferred batch format. Create one node per character object.',
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: {
+                  type: Type.STRING,
+                  description:
+                    'Character name (one node per unique character).',
+                },
+                headImageUrl: {
+                  type: Type.STRING,
+                  description: 'Optional character head image URL reference.',
+                },
+                description: {
+                  type: Type.STRING,
+                  description: 'Character description text.',
+                },
+                traits: {
+                  type: Type.OBJECT,
+                  description:
+                    'Structured character detail input such as behavior, style, personality, goals, notes, and additional trait fields.',
+                  properties: {
+                    behavior: {
+                      type: Type.STRING,
+                      description: 'Behavioral traits and tendencies.',
+                    },
+                    style: {
+                      type: Type.STRING,
+                      description: 'Visual style or design direction.',
+                    },
+                    personality: {
+                      type: Type.STRING,
+                      description: 'Personality summary.',
+                    },
+                    goals: {
+                      type: Type.STRING,
+                      description:
+                        'Character goals, motivations, or arc direction.',
+                    },
+                    notes: {
+                      type: Type.STRING,
+                      description: 'Additional notes.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          fromStory: {
+            type: Type.BOOLEAN,
+            description:
+              'Optional. If true (default), derive characters from the active story node when no explicit names are provided.',
+          },
+          maxCharacters: {
+            type: Type.NUMBER,
+            description:
+              'Optional cap when deriving from story node. Allowed range is 1-12.',
+          },
           name: {
             type: Type.STRING,
-            description: 'Character name to use for the generated node.',
+            description:
+              'Legacy single-character input: character name to use for the generated node.',
           },
           brief: {
             type: Type.STRING,
-            description: 'Character brief markdown content.',
+            description:
+              'Legacy single-character input: character brief markdown content.',
+          },
+          behavior: {
+            type: Type.STRING,
+            description:
+              'Legacy single-character input: behavioral traits and tendencies.',
+          },
+          style: {
+            type: Type.STRING,
+            description:
+              'Legacy single-character input: visual style or design direction.',
+          },
+          personality: {
+            type: Type.STRING,
+            description: 'Legacy single-character input: personality summary.',
+          },
+          goals: {
+            type: Type.STRING,
+            description:
+              'Legacy single-character input: goals, motivations, or arc direction.',
+          },
+          notes: {
+            type: Type.STRING,
+            description: 'Legacy single-character input: additional notes.',
           },
         },
       },
@@ -137,6 +223,10 @@ export const ProjectAgent: AgentDefinition = {
     'For factual project/account data (for example: what projects exist, project names, counts, recency, story status), call the list_projects tool before answering.',
     'Before claiming a story node was updated (especially for markdown/google docs story workflows), call sync_story_node first and use the returned sync.resolvedStoryNodeId in your response.',
     'If sync_story_node reports requestedNodeMissing=true, clearly tell the user the previous node ID no longer exists and provide the resolvedStoryNodeId.',
+    'When asked to generate character briefs from the story, call generate_character_brief without explicit names (or with fromStory=true) so it derives characters from the active story node.',
+    'generate_character_brief derives story-based drafts with a separate non-live completion sub-agent and uses active story markdown as input context.',
+    'generate_character_brief returns storyContext (title + markdown). Use it as source-of-truth context when drafting or revising character briefs in follow-up responses.',
+    'When deriving characters from story text, include only actors/people participating in events. Exclude product names, tools, platforms, locations, organizations, and other non-character entities.',
   ],
   capabilities: [
     '1. Create story nodes and prepare project story workspace.',

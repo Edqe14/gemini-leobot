@@ -99,6 +99,7 @@ model CharacterNode {
   projectId         String   @db.ObjectId
   name              String
   briefMarkdown     String
+  profileJson       String?
   inspirationPrompt String?
   inspirationUrls   String[]
   createdAt         DateTime @default(now())

@@ -12,6 +12,12 @@ const createProjectSchema = z.object({
   name: z.string().min(1).max(120),
 });
 
+const updateCharacterNodeSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2000).default(''),
+  traitsText: z.string().max(12000).default(''),
+});
+
 export const projectsRouter = new Hono();
 
 async function requireProjectAccess(userId: string, projectId: string) {
@@ -26,6 +32,98 @@ async function requireProjectAccess(userId: string, projectId: string) {
   });
 
   return project;
+}
+
+function parseTraitsText(traitsText: string) {
+  const canonical: Record<string, string> = {};
+  const attributes: Record<string, string> = {};
+  const notesFallback: string[] = [];
+
+  const keyMap: Record<string, string> = {
+    behavior: 'behavior',
+    behaviour: 'behavior',
+    style: 'style',
+    personality: 'personality',
+    goals: 'goals',
+    notes: 'notes',
+  };
+
+  for (const rawLine of traitsText.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    const match = /^([A-Za-z][A-Za-z\s_-]{1,40}):\s*(.+)$/.exec(line);
+    if (!match) {
+      notesFallback.push(line);
+      continue;
+    }
+
+    const key = match[1].trim().toLowerCase().replace(/\s+/g, '_');
+    const value = match[2].trim();
+    if (!value) {
+      continue;
+    }
+
+    const canonicalKey = keyMap[key];
+    if (canonicalKey) {
+      canonical[canonicalKey] = value;
+      continue;
+    }
+
+    attributes[match[1].trim()] = value;
+  }
+
+  if (notesFallback.length) {
+    const nextNotes = notesFallback.join(' ');
+    canonical.notes = canonical.notes
+      ? `${canonical.notes} ${nextNotes}`
+      : nextNotes;
+  }
+
+  return {
+    canonical,
+    attributes,
+  };
+}
+
+function buildCharacterBriefMarkdown(input: {
+  description: string;
+  behavior?: string;
+  style?: string;
+  personality?: string;
+  goals?: string;
+  notes?: string;
+}) {
+  const lines: string[] = [];
+
+  if (input.description.trim()) {
+    lines.push(input.description.trim());
+  }
+
+  const traitLines = [
+    ['Behavior', input.behavior],
+    ['Style', input.style],
+    ['Personality', input.personality],
+    ['Goals', input.goals],
+    ['Notes', input.notes],
+  ]
+    .filter(([, value]) => typeof value === 'string' && value.trim())
+    .map(([label, value]) => `- **${label}:** ${String(value).trim()}`);
+
+  if (traitLines.length) {
+    if (lines.length) {
+      lines.push('');
+    }
+    lines.push(...traitLines);
+  }
+
+  if (!lines.length) {
+    lines.push('Character brief generated from story context.');
+  }
+
+  return lines.join('\n');
 }
 
 projectsRouter.get('/api/projects', async (c) => {
@@ -113,6 +211,107 @@ projectsRouter.delete(
       nodeType: 'character',
       deletedCount: deleted.count,
     });
+  },
+);
+
+projectsRouter.patch(
+  '/api/projects/:projectId/character-nodes/:nodeId',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload = updateCharacterNodeSchema.parse(body);
+
+    const existing = await prisma.characterNode.findFirst({
+      where: {
+        id: nodeId,
+        projectId,
+      },
+      select: {
+        id: true,
+        profileJson: true,
+      },
+    });
+
+    if (!existing) {
+      return c.json({ error: 'Character node not found' }, 404);
+    }
+
+    const existingProfile = (() => {
+      if (!existing.profileJson) {
+        return {} as Record<string, unknown>;
+      }
+
+      try {
+        const parsed = JSON.parse(existing.profileJson);
+        return parsed && typeof parsed === 'object'
+          ? (parsed as Record<string, unknown>)
+          : ({} as Record<string, unknown>);
+      } catch {
+        return {} as Record<string, unknown>;
+      }
+    })();
+
+    const parsedTraits = parseTraitsText(payload.traitsText);
+
+    const nextProfile: Record<string, unknown> = {
+      ...existingProfile,
+      description: payload.description,
+      ...(parsedTraits.canonical.behavior
+        ? { behavior: parsedTraits.canonical.behavior }
+        : {}),
+      ...(parsedTraits.canonical.style
+        ? { style: parsedTraits.canonical.style }
+        : {}),
+      ...(parsedTraits.canonical.personality
+        ? { personality: parsedTraits.canonical.personality }
+        : {}),
+      ...(parsedTraits.canonical.goals
+        ? { goals: parsedTraits.canonical.goals }
+        : {}),
+      ...(parsedTraits.canonical.notes
+        ? { notes: parsedTraits.canonical.notes }
+        : {}),
+      ...(Object.keys(parsedTraits.attributes).length
+        ? { attributes: parsedTraits.attributes }
+        : {}),
+    };
+
+    const briefMarkdown = buildCharacterBriefMarkdown({
+      description: payload.description,
+      behavior:
+        typeof nextProfile.behavior === 'string' ? nextProfile.behavior : '',
+      style: typeof nextProfile.style === 'string' ? nextProfile.style : '',
+      personality:
+        typeof nextProfile.personality === 'string'
+          ? nextProfile.personality
+          : '',
+      goals: typeof nextProfile.goals === 'string' ? nextProfile.goals : '',
+      notes: typeof nextProfile.notes === 'string' ? nextProfile.notes : '',
+    });
+
+    const node = await prisma.characterNode.update({
+      where: {
+        id: existing.id,
+      },
+      data: {
+        name: payload.name,
+        briefMarkdown,
+        profileJson: JSON.stringify(nextProfile),
+      },
+    });
+
+    return c.json({ ok: true, node });
   },
 );
 
