@@ -18,6 +18,15 @@ const updateCharacterNodeSchema = z.object({
   traitsText: z.string().max(12000).default(''),
 });
 
+const updateStyleNodeSchema = z.object({
+  name: z.string().trim().min(1).max(120).default('Project Style Guide'),
+  writingStyle: z.string().trim().max(8000).default(''),
+  characterStyle: z.string().trim().max(8000).default(''),
+  artStyle: z.string().trim().max(8000).default(''),
+  storytellingPacing: z.string().trim().max(8000).default(''),
+  extrasText: z.string().max(12000).default(''),
+});
+
 const updateNodePositionSchema = z.object({
   positionX: z.number().finite(),
   positionY: z.number().finite(),
@@ -126,6 +135,58 @@ function buildCharacterBriefMarkdown(input: {
 
   if (!lines.length) {
     lines.push('Character brief generated from story context.');
+  }
+
+  return lines.join('\n');
+}
+
+function parseStyleExtrasText(extrasText: string) {
+  const extras: Record<string, string> = {};
+
+  for (const rawLine of extrasText.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    const match = /^([A-Za-z][A-Za-z\s_-]{1,60}):\s*(.+)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+
+    const key = match[1].trim();
+    const value = match[2].trim();
+    if (!key || !value) {
+      continue;
+    }
+
+    extras[key] = value;
+  }
+
+  return extras;
+}
+
+function buildStyleDescription(input: {
+  writingStyle: string;
+  characterStyle: string;
+  artStyle: string;
+  storytellingPacing: string;
+  extras: Record<string, string>;
+}) {
+  const lines: string[] = [
+    `Writing Style: ${input.writingStyle || 'Not specified yet.'}`,
+    `Character Style: ${input.characterStyle || 'Not specified yet.'}`,
+    `Art Style: ${input.artStyle || 'Not specified yet.'}`,
+    `Storytelling Pacing: ${input.storytellingPacing || 'Not specified yet.'}`,
+  ];
+
+  const extrasEntries = Object.entries(input.extras);
+  if (extrasEntries.length) {
+    lines.push('');
+    lines.push('Additional Style Direction:');
+    for (const [key, value] of extrasEntries) {
+      lines.push(`- ${key}: ${value}`);
+    }
   }
 
   return lines.join('\n');
@@ -354,6 +415,66 @@ projectsRouter.patch('/api/projects/:projectId/story/position', async (c) => {
     positionY: payload.positionY,
   });
 });
+
+projectsRouter.patch(
+  '/api/projects/:projectId/style-nodes/:nodeId',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload = updateStyleNodeSchema.parse(body);
+
+    const existing = await prisma.styleNode.findFirst({
+      where: {
+        id: nodeId,
+        projectId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existing) {
+      return c.json({ error: 'Style node not found' }, 404);
+    }
+
+    const extras = parseStyleExtrasText(payload.extrasText);
+    const description = buildStyleDescription({
+      writingStyle: payload.writingStyle,
+      characterStyle: payload.characterStyle,
+      artStyle: payload.artStyle,
+      storytellingPacing: payload.storytellingPacing,
+      extras,
+    });
+
+    const node = await prisma.styleNode.update({
+      where: {
+        id: existing.id,
+      },
+      data: {
+        name: payload.name,
+        writingStyle: payload.writingStyle,
+        characterStyle: payload.characterStyle,
+        artStyle: payload.artStyle,
+        storytellingPacing: payload.storytellingPacing,
+        extrasJson: JSON.stringify(extras),
+        description,
+      },
+    });
+
+    return c.json({ ok: true, node });
+  },
+);
 
 projectsRouter.patch(
   '/api/projects/:projectId/character-nodes/:nodeId/position',

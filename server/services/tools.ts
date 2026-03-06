@@ -46,6 +46,16 @@ type CharacterDraftParseResult =
       issues: string[];
     };
 
+type ProjectStylePayload = {
+  writingStyle: string;
+  characterStyle: string;
+  artStyle: string;
+  storytellingPacing: string;
+  extras: Record<string, string>;
+};
+
+type StyleRefineMode = 'direct' | 'subagent_refine';
+
 const CHARACTER_CANONICAL_KEYS = new Set([
   'name',
   'description',
@@ -193,6 +203,219 @@ const generatedCharacterSchema = z
 const generatedCharactersPayloadSchema = z.object({
   characters: z.array(generatedCharacterSchema).min(1).max(12),
 });
+
+const styleTextSchema = z.string().trim().max(8000);
+
+const styleExtrasSchema = z.record(z.string(), z.unknown());
+
+const stylePatchSchema = z.object({
+  writingStyle: styleTextSchema.optional(),
+  characterStyle: styleTextSchema.optional(),
+  artStyle: styleTextSchema.optional(),
+  storytellingPacing: styleTextSchema.optional(),
+  extras: styleExtrasSchema.optional(),
+  styleName: z.string().trim().min(1).max(120).optional(),
+  replace: z.boolean().optional(),
+  // Legacy fields for backward compatibility with existing prompts/tool usage.
+  description: styleTextSchema.optional(),
+  style: styleTextSchema.optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+});
+
+const styleRefineSchema = stylePatchSchema.extend({
+  request: z.string().trim().min(1).max(12000),
+});
+
+const generatedStylePayloadSchema = z.object({
+  writingStyle: styleTextSchema,
+  characterStyle: styleTextSchema,
+  artStyle: styleTextSchema,
+  storytellingPacing: styleTextSchema,
+  extras: z.record(z.string(), z.string()).optional(),
+});
+
+const STYLE_DEFAULT_POSITION = {
+  x: 980,
+  y: 120,
+} as const;
+
+const STORY_DEFAULT_POSITION = {
+  x: 80,
+  y: 120,
+} as const;
+
+const GRID_START_X = 80;
+const GRID_START_Y = 120;
+const GRID_STEP_X = 360;
+const GRID_STEP_Y = 220;
+const GRID_MAX_ROWS = 200;
+
+const STORY_NODE_SIZE = { width: 800, height: 420 } as const;
+const CHARACTER_NODE_SIZE = { width: 460, height: 520 } as const;
+const STYLE_NODE_SIZE = { width: 520, height: 980 } as const;
+const STORYBOARD_NODE_SIZE = { width: 420, height: 260 } as const;
+const NODE_COLLISION_MARGIN = 16;
+
+type NodeRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function intersectsRect(a: NodeRect, b: NodeRect) {
+  return !(
+    a.x + a.width + NODE_COLLISION_MARGIN <= b.x ||
+    b.x + b.width + NODE_COLLISION_MARGIN <= a.x ||
+    a.y + a.height + NODE_COLLISION_MARGIN <= b.y ||
+    b.y + b.height + NODE_COLLISION_MARGIN <= a.y
+  );
+}
+
+function buildRect(input: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}) {
+  return {
+    x: input.x,
+    y: input.y,
+    width: input.width,
+    height: input.height,
+  } satisfies NodeRect;
+}
+
+async function getOccupiedNodeRects(
+  projectId: string,
+  options?: { ignoreStyleNodeId?: string },
+) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: {
+      story: {
+        select: {
+          positionX: true,
+          positionY: true,
+        },
+      },
+      characterNodes: {
+        orderBy: {
+          createdAt: 'asc',
+        },
+        select: {
+          positionX: true,
+          positionY: true,
+        },
+      },
+      styleNodes: {
+        orderBy: {
+          createdAt: 'asc',
+        },
+        select: {
+          id: true,
+          positionX: true,
+          positionY: true,
+        },
+      },
+      storyboardNodes: {
+        orderBy: {
+          createdAt: 'asc',
+        },
+        select: {
+          positionX: true,
+          positionY: true,
+        },
+      },
+    },
+  });
+
+  const occupied: NodeRect[] = [];
+
+  const reserve = (input: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }) => {
+    const { x, y, width, height } = input;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return;
+    }
+
+    occupied.push(buildRect({ x, y, width, height }));
+  };
+
+  if (project?.story) {
+    reserve({
+      x: project.story.positionX ?? STORY_DEFAULT_POSITION.x,
+      y: project.story.positionY ?? STORY_DEFAULT_POSITION.y,
+      width: STORY_NODE_SIZE.width,
+      height: STORY_NODE_SIZE.height,
+    });
+  }
+
+  for (const [index, node] of (project?.characterNodes ?? []).entries()) {
+    reserve({
+      x: node.positionX ?? 640,
+      y: node.positionY ?? 120 + index * 440,
+      width: CHARACTER_NODE_SIZE.width,
+      height: CHARACTER_NODE_SIZE.height,
+    });
+  }
+
+  for (const [index, node] of (project?.styleNodes ?? []).entries()) {
+    if (options?.ignoreStyleNodeId && node.id === options.ignoreStyleNodeId) {
+      continue;
+    }
+
+    reserve({
+      x: node.positionX ?? STYLE_DEFAULT_POSITION.x,
+      y: node.positionY ?? STYLE_DEFAULT_POSITION.y + index * 190,
+      width: STYLE_NODE_SIZE.width,
+      height: STYLE_NODE_SIZE.height,
+    });
+  }
+
+  for (const [index, node] of (project?.storyboardNodes ?? []).entries()) {
+    reserve({
+      x: node.positionX ?? 1320,
+      y: node.positionY ?? 120 + index * 190,
+      width: STORYBOARD_NODE_SIZE.width,
+      height: STORYBOARD_NODE_SIZE.height,
+    });
+  }
+
+  return occupied;
+}
+
+async function resolvePreferredStylePosition(
+  projectId: string,
+  options?: { ignoreStyleNodeId?: string },
+) {
+  const occupied = await getOccupiedNodeRects(projectId, options);
+
+  for (let row = 0; row < GRID_MAX_ROWS; row += 1) {
+    const candidate = {
+      x: STYLE_DEFAULT_POSITION.x,
+      y: STYLE_DEFAULT_POSITION.y + row * GRID_STEP_Y,
+    };
+
+    const candidateRect = buildRect({
+      x: candidate.x,
+      y: candidate.y,
+      width: STYLE_NODE_SIZE.width,
+      height: STYLE_NODE_SIZE.height,
+    });
+
+    if (!occupied.some((rect) => intersectsRect(candidateRect, rect))) {
+      return candidate;
+    }
+  }
+
+  const [fallback] = await allocateNodePositions(projectId, 1);
+  return fallback ?? STYLE_DEFAULT_POSITION;
+}
 
 function getGoogleGenAIOptions(): GoogleGenAIOptions {
   if (env.GEMINI_PROVIDER === 'vertex') {
@@ -702,6 +925,374 @@ function getGenerateContentText(response: unknown) {
   }
 
   return '';
+}
+
+function normalizeStyleExtras(raw: unknown) {
+  if (!raw || typeof raw !== 'object') {
+    return {} as Record<string, string>;
+  }
+
+  const extras: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const normalizedKey = key.trim();
+    const normalizedValue = stringifyUnknownValue(value);
+    if (!normalizedKey || !normalizedValue) {
+      continue;
+    }
+
+    extras[normalizedKey] = normalizedValue;
+  }
+
+  return extras;
+}
+
+function parseStyleExtrasJson(raw: string | null | undefined) {
+  if (!raw) {
+    return {} as Record<string, string>;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeStyleExtras(parsed);
+  } catch {
+    return {} as Record<string, string>;
+  }
+}
+
+function buildStyleDescription(payload: ProjectStylePayload) {
+  const lines: string[] = [
+    `Writing Style: ${payload.writingStyle || 'Not specified yet.'}`,
+    `Character Style: ${payload.characterStyle || 'Not specified yet.'}`,
+    `Art Style: ${payload.artStyle || 'Not specified yet.'}`,
+    `Storytelling Pacing: ${payload.storytellingPacing || 'Not specified yet.'}`,
+  ];
+
+  const extras = Object.entries(payload.extras);
+  if (extras.length) {
+    lines.push('');
+    lines.push('Additional Style Direction:');
+    for (const [key, value] of extras) {
+      lines.push(`- ${key}: ${value}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function toProjectStylePayload(node: {
+  writingStyle?: string | null;
+  characterStyle?: string | null;
+  artStyle?: string | null;
+  storytellingPacing?: string | null;
+  description?: string | null;
+  extrasJson?: string | null;
+}): ProjectStylePayload {
+  const writingStyle = normalizeStringValue(node.writingStyle);
+  const characterStyle = normalizeStringValue(node.characterStyle);
+  const artStyle = normalizeStringValue(node.artStyle);
+  const storytellingPacing = normalizeStringValue(node.storytellingPacing);
+
+  const legacyFallback = normalizeStringValue(node.description);
+  const extras = parseStyleExtrasJson(node.extrasJson);
+
+  return {
+    writingStyle: writingStyle || legacyFallback,
+    characterStyle,
+    artStyle,
+    storytellingPacing,
+    extras,
+  };
+}
+
+function mergeStylePayload(input: {
+  current: ProjectStylePayload;
+  patch: Partial<ProjectStylePayload>;
+  replace: boolean;
+}): ProjectStylePayload {
+  const next = input.replace
+    ? {
+        writingStyle: '',
+        characterStyle: '',
+        artStyle: '',
+        storytellingPacing: '',
+        extras: {},
+      }
+    : {
+        ...input.current,
+        extras: { ...input.current.extras },
+      };
+
+  if (typeof input.patch.writingStyle === 'string') {
+    next.writingStyle = input.patch.writingStyle.trim();
+  }
+  if (typeof input.patch.characterStyle === 'string') {
+    next.characterStyle = input.patch.characterStyle.trim();
+  }
+  if (typeof input.patch.artStyle === 'string') {
+    next.artStyle = input.patch.artStyle.trim();
+  }
+  if (typeof input.patch.storytellingPacing === 'string') {
+    next.storytellingPacing = input.patch.storytellingPacing.trim();
+  }
+
+  if (input.patch.extras) {
+    next.extras = input.replace
+      ? normalizeStyleExtras(input.patch.extras)
+      : {
+          ...next.extras,
+          ...normalizeStyleExtras(input.patch.extras),
+        };
+  }
+
+  return next;
+}
+
+function hasLargeRewriteIntent(request: string) {
+  const normalized = request.toLowerCase();
+  return [
+    /\boverhaul\b/,
+    /\brework\b/,
+    /\brewrite\b/,
+    /\bretone\b/,
+    /\bmajor\s+shift\b/,
+    /\bdramatic\s+change\b/,
+    /\bfrom\s+scratch\b/,
+    /\breimagine\b/,
+    /\breset\s+the\s+style\b/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function inferStylePatchFromRequest(request: string) {
+  const normalized = request.trim();
+  const lower = normalized.toLowerCase();
+  if (!normalized) {
+    return {} as Partial<ProjectStylePayload>;
+  }
+
+  if (/pacing|rhythm|tempo/.test(lower)) {
+    return { storytellingPacing: normalized };
+  }
+
+  if (/art|visual|aesthetic|look|palette|cinematic/.test(lower)) {
+    return { artStyle: normalized };
+  }
+
+  if (/character|persona|dialogue|voice\s+of\s+characters/.test(lower)) {
+    return { characterStyle: normalized };
+  }
+
+  if (/writing|prose|tone|narration|retouch|rewrite/.test(lower)) {
+    return { writingStyle: normalized };
+  }
+
+  return {
+    extras: {
+      LatestDirection: normalized,
+    },
+  };
+}
+
+async function deriveStylePayloadWithSubAgent(input: {
+  current: ProjectStylePayload;
+  request: string;
+}) {
+  const prompt = [
+    'You are a style refinement sub-agent for story pre-production.',
+    'Task: update the project style profile from user request.',
+    'Return strict JSON only with fields:',
+    '{"writingStyle":"...","characterStyle":"...","artStyle":"...","storytellingPacing":"...","extras":{"key":"value"}}',
+    'Rules:',
+    '1) Keep concise but specific creative direction.',
+    '2) Preserve useful existing intent unless request explicitly replaces it.',
+    '3) Do not output markdown fences.',
+    '',
+    `Current writingStyle: ${input.current.writingStyle || '(empty)'}`,
+    `Current characterStyle: ${input.current.characterStyle || '(empty)'}`,
+    `Current artStyle: ${input.current.artStyle || '(empty)'}`,
+    `Current storytellingPacing: ${input.current.storytellingPacing || '(empty)'}`,
+    `Current extras: ${JSON.stringify(input.current.extras)}`,
+    '',
+    `User adjustment request: ${input.request}`,
+  ].join('\n');
+
+  const response = await characterDerivationAi.models.generateContent({
+    model: env.GEMINI_CHARACTER_SUBAGENT_MODEL,
+    contents: prompt,
+    config: {
+      temperature: 0.3,
+      responseMimeType: 'application/json',
+    },
+  });
+
+  const text = extractJsonText(getGenerateContentText(response));
+  if (!text) {
+    return null;
+  }
+
+  const parsedUnknown = JSON.parse(text);
+  const parsed = generatedStylePayloadSchema.safeParse(parsedUnknown);
+  if (!parsed.success) {
+    return null;
+  }
+
+  return {
+    writingStyle: parsed.data.writingStyle,
+    characterStyle: parsed.data.characterStyle,
+    artStyle: parsed.data.artStyle,
+    storytellingPacing: parsed.data.storytellingPacing,
+    extras: normalizeStyleExtras(parsed.data.extras),
+  } satisfies ProjectStylePayload;
+}
+
+async function ensureCanonicalStyleNode(context: ToolContext) {
+  if (!context.projectId) {
+    return {
+      ok: false as const,
+      message: 'This tool requires an active project context.',
+    };
+  }
+
+  const access = await verifyProjectAccess(context);
+  if (!access.ok) {
+    return access;
+  }
+
+  const existingNodes = await prisma.styleNode.findMany({
+    where: {
+      projectId: context.projectId,
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  });
+
+  const canonical = existingNodes[0];
+  if (!canonical) {
+    const preferredPosition = await resolvePreferredStylePosition(
+      context.projectId,
+    );
+    const initialPayload: ProjectStylePayload = {
+      writingStyle: 'Clear, vivid prose that supports scene readability.',
+      characterStyle:
+        'Distinct voices and motivations with consistent behavior.',
+      artStyle: 'Cinematic visual language with coherent mood and palette.',
+      storytellingPacing:
+        'Balanced pacing: concise setup, rising tension, sharp payoff.',
+      extras: {},
+    };
+
+    const created = await prisma.styleNode.create({
+      data: {
+        projectId: context.projectId,
+        name: 'Project Style Guide',
+        description: buildStyleDescription(initialPayload),
+        writingStyle: initialPayload.writingStyle,
+        characterStyle: initialPayload.characterStyle,
+        artStyle: initialPayload.artStyle,
+        storytellingPacing: initialPayload.storytellingPacing,
+        extrasJson: JSON.stringify(initialPayload.extras),
+        positionX: preferredPosition.x,
+        positionY: preferredPosition.y,
+      },
+    });
+
+    return {
+      ok: true as const,
+      node: created,
+      style: initialPayload,
+      deduped: false,
+    };
+  }
+
+  let node = canonical;
+  const duplicates = existingNodes.slice(1);
+  if (duplicates.length) {
+    const duplicateIds = duplicates.map((item) => item.id);
+    await prisma.styleNode.deleteMany({
+      where: {
+        id: {
+          in: duplicateIds,
+        },
+      },
+    });
+  }
+
+  const payload = toProjectStylePayload(node);
+  const hasPersistedPosition =
+    Number.isFinite(node.positionX) && Number.isFinite(node.positionY);
+  const currentPosition = hasPersistedPosition
+    ? {
+        x: node.positionX as number,
+        y: node.positionY as number,
+      }
+    : null;
+
+  const preferredPosition = await resolvePreferredStylePosition(
+    context.projectId,
+    {
+      ignoreStyleNodeId: node.id,
+    },
+  );
+  const occupiedRects = await getOccupiedNodeRects(context.projectId, {
+    ignoreStyleNodeId: node.id,
+  });
+
+  const currentRect =
+    currentPosition != null
+      ? buildRect({
+          x: currentPosition.x,
+          y: currentPosition.y,
+          width: STYLE_NODE_SIZE.width,
+          height: STYLE_NODE_SIZE.height,
+        })
+      : null;
+
+  const currentOverlapsOccupied =
+    currentRect != null &&
+    occupiedRects.some((rect) => intersectsRect(currentRect, rect));
+
+  const overlapsLegacyStoryDefault =
+    hasPersistedPosition &&
+    Math.abs((node.positionX as number) - STORY_DEFAULT_POSITION.x) < 0.5 &&
+    Math.abs((node.positionY as number) - STORY_DEFAULT_POSITION.y) < 0.5;
+
+  const needsLegacyBackfill =
+    !normalizeStringValue(node.writingStyle) ||
+    !normalizeStringValue(node.description) ||
+    !normalizeStringValue(node.name) ||
+    !hasPersistedPosition ||
+    overlapsLegacyStoryDefault ||
+    currentOverlapsOccupied;
+
+  if (needsLegacyBackfill) {
+    node = await prisma.styleNode.update({
+      where: {
+        id: node.id,
+      },
+      data: {
+        name: normalizeStringValue(node.name) || 'Project Style Guide',
+        description: buildStyleDescription(payload),
+        writingStyle: payload.writingStyle,
+        characterStyle: payload.characterStyle,
+        artStyle: payload.artStyle,
+        storytellingPacing: payload.storytellingPacing,
+        extrasJson: JSON.stringify(payload.extras),
+        ...(needsLegacyBackfill
+          ? {
+              positionX: preferredPosition.x,
+              positionY: preferredPosition.y,
+            }
+          : {}),
+      },
+    });
+  }
+
+  return {
+    ok: true as const,
+    node,
+    style: toProjectStylePayload(node),
+    deduped: duplicates.length > 0,
+  };
 }
 
 async function deriveCharacterDraftsFromStoryWithSubAgent(input: {
@@ -1393,26 +1984,187 @@ export async function generateCharacterBriefTool(context: ToolContext) {
 }
 
 export async function generateCharacterInspirationTool(context: ToolContext) {
-  if (!context.projectId) {
-    throw new Error('projectId is required for inspiration generation');
+  return upsertProjectStyleNodeTool({
+    ...context,
+    args: {
+      ...context.args,
+      styleName:
+        normalizeOptionalTrimmedString(context.args.styleName) ||
+        'Project Style Guide',
+      description:
+        normalizeOptionalTrimmedString(context.args.description) ||
+        'Generated style reference from story and character brief.',
+    },
+  });
+}
+
+export async function getProjectStyleNodeTool(context: ToolContext) {
+  const canonical = await ensureCanonicalStyleNode(context);
+  if (!canonical.ok) {
+    return canonical;
   }
 
-  const [position] = await allocateNodePositions(context.projectId, 1);
+  return {
+    ok: true,
+    message: canonical.deduped
+      ? 'Canonical style node resolved and duplicate style nodes were consolidated.'
+      : 'Canonical style node resolved for active project.',
+    styleNode: canonical.node,
+    styleProfile: canonical.style,
+  };
+}
 
-  const styleNode = await prisma.styleNode.create({
+export async function upsertProjectStyleNodeTool(context: ToolContext) {
+  const parsed = stylePatchSchema.safeParse(context.args);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: 'Invalid style payload for upsert_project_style_node.',
+      issues: formatValidationIssues(parsed.error.issues),
+    };
+  }
+
+  const canonical = await ensureCanonicalStyleNode(context);
+  if (!canonical.ok) {
+    return canonical;
+  }
+
+  const payload = parsed.data;
+  const legacyDescription = normalizeStringValue(payload.description);
+  const directPatch: Partial<ProjectStylePayload> = {
+    ...(payload.writingStyle !== undefined
+      ? { writingStyle: payload.writingStyle }
+      : legacyDescription
+        ? { writingStyle: legacyDescription }
+        : {}),
+    ...(payload.characterStyle !== undefined
+      ? { characterStyle: payload.characterStyle }
+      : {}),
+    ...(payload.artStyle !== undefined ? { artStyle: payload.artStyle } : {}),
+    ...(payload.storytellingPacing !== undefined
+      ? { storytellingPacing: payload.storytellingPacing }
+      : {}),
+    ...(payload.extras ? { extras: normalizeStyleExtras(payload.extras) } : {}),
+  };
+
+  const next = mergeStylePayload({
+    current: canonical.style,
+    patch: directPatch,
+    replace: Boolean(payload.replace),
+  });
+
+  const updated = await prisma.styleNode.update({
+    where: {
+      id: canonical.node.id,
+    },
     data: {
-      projectId: context.projectId,
-      name: String(context.args.styleName ?? 'Default Style'),
-      description: String(
-        context.args.description ??
-          'Generated style reference from story and character brief.',
-      ),
-      positionX: position?.x ?? 980,
-      positionY: position?.y ?? 120,
+      name:
+        normalizeStringValue(payload.styleName || payload.name) ||
+        normalizeStringValue(canonical.node.name) ||
+        'Project Style Guide',
+      description: buildStyleDescription(next),
+      writingStyle: next.writingStyle,
+      characterStyle: next.characterStyle,
+      artStyle: next.artStyle,
+      storytellingPacing: next.storytellingPacing,
+      extrasJson: JSON.stringify(next.extras),
     },
   });
 
-  return { ok: true, styleNode };
+  return {
+    ok: true,
+    message: 'Project style node updated.',
+    updateMode: 'direct' satisfies StyleRefineMode,
+    styleNode: updated,
+    styleProfile: next,
+  };
+}
+
+export async function refineProjectStyleNodeTool(context: ToolContext) {
+  const parsed = styleRefineSchema.safeParse(context.args);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: 'Invalid style refine payload.',
+      issues: formatValidationIssues(parsed.error.issues),
+    };
+  }
+
+  const canonical = await ensureCanonicalStyleNode(context);
+  if (!canonical.ok) {
+    return canonical;
+  }
+
+  const payload = parsed.data;
+  const delegateToSubAgent = hasLargeRewriteIntent(payload.request);
+
+  let mode: StyleRefineMode = 'direct';
+  let basePatch = inferStylePatchFromRequest(payload.request);
+
+  if (delegateToSubAgent) {
+    try {
+      const refined = await deriveStylePayloadWithSubAgent({
+        current: canonical.style,
+        request: payload.request,
+      });
+      if (refined) {
+        basePatch = refined;
+        mode = 'subagent_refine';
+      }
+    } catch {
+      // Fall back to deterministic direct patch if sub-agent generation fails.
+    }
+  }
+
+  const directPatch: Partial<ProjectStylePayload> = {
+    ...basePatch,
+    ...(payload.writingStyle !== undefined
+      ? { writingStyle: payload.writingStyle }
+      : {}),
+    ...(payload.characterStyle !== undefined
+      ? { characterStyle: payload.characterStyle }
+      : {}),
+    ...(payload.artStyle !== undefined ? { artStyle: payload.artStyle } : {}),
+    ...(payload.storytellingPacing !== undefined
+      ? { storytellingPacing: payload.storytellingPacing }
+      : {}),
+    ...(payload.extras ? { extras: normalizeStyleExtras(payload.extras) } : {}),
+  };
+
+  const next = mergeStylePayload({
+    current: canonical.style,
+    patch: directPatch,
+    replace: Boolean(payload.replace),
+  });
+
+  const updated = await prisma.styleNode.update({
+    where: {
+      id: canonical.node.id,
+    },
+    data: {
+      name:
+        normalizeStringValue(payload.styleName || payload.name) ||
+        normalizeStringValue(canonical.node.name) ||
+        'Project Style Guide',
+      description: buildStyleDescription(next),
+      writingStyle: next.writingStyle,
+      characterStyle: next.characterStyle,
+      artStyle: next.artStyle,
+      storytellingPacing: next.storytellingPacing,
+      extrasJson: JSON.stringify(next.extras),
+    },
+  });
+
+  return {
+    ok: true,
+    message:
+      mode === 'subagent_refine'
+        ? 'Project style node refined via sub-agent and updated.'
+        : 'Project style node refined with direct update logic.',
+    updateMode: mode,
+    styleNode: updated,
+    styleProfile: next,
+  };
 }
 
 export async function generateStoryboardTool(context: ToolContext) {

@@ -114,9 +114,14 @@ model CharacterNode {
 
 model StyleNode {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  projectId   String   @db.ObjectId
+  projectId   String   @unique @db.ObjectId
   name        String
   description String
+  writingStyle String
+  characterStyle String
+  artStyle String
+  storytellingPacing String
+  extrasJson   String?
   positionX   Float?
   positionY   Float?
   createdAt   DateTime @default(now())

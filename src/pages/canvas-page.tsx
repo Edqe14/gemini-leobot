@@ -2,7 +2,10 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Background,
   Controls,
+  Handle,
   MiniMap,
+  type Edge,
+  Position,
   type NodeChange,
   type NodePositionChange,
   type Node,
@@ -80,6 +83,11 @@ type StyleNodeRecord = {
   id: string;
   name: string;
   description: string;
+  writingStyle?: string | null;
+  characterStyle?: string | null;
+  artStyle?: string | null;
+  storytellingPacing?: string | null;
+  extrasJson?: string | null;
   positionX?: number | null;
   positionY?: number | null;
 };
@@ -114,6 +122,25 @@ type CharacterSaveState = 'idle' | 'saving' | 'saved' | 'error';
 type CharacterNodeUpdateResponse = {
   ok?: boolean;
   node?: CharacterNodeRecord;
+  error?: string;
+};
+
+type StyleSaveState = 'idle' | 'saving' | 'saved' | 'error';
+
+type StyleDraftState = {
+  name: string;
+  writingStyle: string;
+  characterStyle: string;
+  artStyle: string;
+  storytellingPacing: string;
+  extrasText: string;
+  saveState: StyleSaveState;
+  saveMessage?: string;
+};
+
+type StyleNodeUpdateResponse = {
+  ok?: boolean;
+  node?: StyleNodeRecord;
   error?: string;
 };
 
@@ -185,6 +212,7 @@ type StoryImportMode = 'markdown' | 'google_docs';
 
 type StoryImportNodeData = {
   activeProjectId: string;
+  hasIncomingConnection: boolean;
   mode: StoryImportMode;
   markdownInput: string;
   googleDocUrl: string;
@@ -200,6 +228,7 @@ type StoryImportNodeData = {
 
 type CharacterCardNodeData = {
   characterId: string;
+  hasIncomingConnection: boolean;
   name: string;
   description: string;
   traitsText: string;
@@ -210,12 +239,33 @@ type CharacterCardNodeData = {
   onTraitsChange: (value: string) => void;
 };
 
+type StyleCardNodeData = {
+  styleId: string;
+  hasOutgoingConnection: boolean;
+  name: string;
+  writingStyle: string;
+  characterStyle: string;
+  artStyle: string;
+  storytellingPacing: string;
+  extrasText: string;
+  saveState: StyleSaveState;
+  saveMessage?: string;
+  onNameChange: (value: string) => void;
+  onWritingStyleChange: (value: string) => void;
+  onCharacterStyleChange: (value: string) => void;
+  onArtStyleChange: (value: string) => void;
+  onStorytellingPacingChange: (value: string) => void;
+  onExtrasTextChange: (value: string) => void;
+};
+
 type CanvasNodeData =
   | CreativeNodeData
   | StoryImportNodeData
-  | CharacterCardNodeData;
+  | CharacterCardNodeData
+  | StyleCardNodeData;
 type StoryImportCanvasNode = Node<StoryImportNodeData, 'storyImport'>;
 type CharacterCardCanvasNode = Node<CharacterCardNodeData, 'characterCard'>;
+type StyleCardCanvasNode = Node<StyleCardNodeData, 'styleCard'>;
 
 type PendingContextSwitch = {
   projectId: string;
@@ -232,6 +282,34 @@ const CONTEXT_SWITCH_TIMEOUT_MS = 8000;
 const CONTEXT_SWITCH_HARD_TIMEOUT_MS = 12000;
 const CONTEXT_SWITCH_SIGNAL_EXTENSION_MS = 4000;
 
+type HandleSide = 'top' | 'right' | 'bottom' | 'left';
+
+function getSourceHandleId(side: HandleSide) {
+  return `style-source-${side}`;
+}
+
+function getTargetHandleId(side: HandleSide) {
+  return `target-${side}`;
+}
+
+function getNearestHandleSides(input: {
+  source: { x: number; y: number };
+  target: { x: number; y: number };
+}) {
+  const dx = input.target.x - input.source.x;
+  const dy = input.target.y - input.source.y;
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? ({ source: 'right', target: 'left' } as const)
+      : ({ source: 'left', target: 'right' } as const);
+  }
+
+  return dy >= 0
+    ? ({ source: 'bottom', target: 'top' } as const)
+    : ({ source: 'top', target: 'bottom' } as const);
+}
+
 function getProjectIdFromSearch(search: string) {
   const projectId = new URLSearchParams(search).get('projectId');
   return projectId?.trim() || '';
@@ -241,7 +319,35 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
   const nodeData = data;
 
   return (
-    <Card className='w-200 border border-border/80 bg-card/95 p-4 shadow-sm backdrop-blur'>
+    <Card className='relative w-200 border border-border/80 bg-card/95 p-4 shadow-sm backdrop-blur'>
+      {nodeData.hasIncomingConnection ? (
+        <>
+          <Handle
+            type='target'
+            id={getTargetHandleId('top')}
+            position={Position.Top}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('right')}
+            position={Position.Right}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('bottom')}
+            position={Position.Bottom}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('left')}
+            position={Position.Left}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+        </>
+      ) : null}
       <div className='mb-3 flex items-center justify-between gap-3'>
         <p className='text-sm font-semibold'>Import Story</p>
         <Badge variant='outline'>
@@ -325,7 +431,35 @@ function CharacterCardNodeComponent({
   data,
 }: NodeProps<CharacterCardCanvasNode>) {
   return (
-    <Card className='w-115 border border-border/90 bg-card p-4 shadow-sm'>
+    <Card className='relative w-115 border border-border/90 bg-card p-4 shadow-sm'>
+      {data.hasIncomingConnection ? (
+        <>
+          <Handle
+            type='target'
+            id={getTargetHandleId('top')}
+            position={Position.Top}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('right')}
+            position={Position.Right}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('bottom')}
+            position={Position.Bottom}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('left')}
+            position={Position.Left}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+        </>
+      ) : null}
       <div className='space-y-3'>
         <div className='rounded-xl border border-border bg-background px-4 py-3'>
           <input
@@ -355,6 +489,125 @@ function CharacterCardNodeComponent({
           placeholder='Behavior: ...\nStyle: ...\nPersonality: ...\nGoals: ...\nNotes: ...'
           className='nodrag nowheel nopan min-h-44 w-full resize-y border-0 bg-transparent font-mono text-sm leading-relaxed text-foreground/90 outline-none'
         />
+      </div>
+
+      <div className='mt-3 flex justify-end'>
+        <p className='text-xs text-muted-foreground'>
+          {data.saveState === 'saving'
+            ? 'Saving...'
+            : data.saveState === 'saved'
+              ? 'Saved'
+              : data.saveState === 'error'
+                ? data.saveMessage || 'Save failed'
+                : data.saveMessage || 'Autosave'}
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+function StyleCardNodeComponent({ data }: NodeProps<StyleCardCanvasNode>) {
+  return (
+    <Card className='relative w-130 border border-border/90 bg-card p-4 shadow-sm'>
+      {data.hasOutgoingConnection ? (
+        <>
+          <Handle
+            type='source'
+            id={getSourceHandleId('top')}
+            position={Position.Top}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('right')}
+            position={Position.Right}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('bottom')}
+            position={Position.Bottom}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('left')}
+            position={Position.Left}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+        </>
+      ) : null}
+      <div className='space-y-3'>
+        <div className='px-2 py-1'>
+          <p className='text-center text-2xl font-semibold leading-tight tracking-tight'>
+            {data.name || 'Project Style Guide'}
+          </p>
+        </div>
+        <div className='grid gap-3'>
+          <div className='rounded-xl border border-border bg-background px-4 py-3'>
+            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
+              Writing Style
+            </p>
+            <textarea
+              value={data.writingStyle}
+              onChange={(event) =>
+                data.onWritingStyleChange(event.target.value)
+              }
+              placeholder='Rewrite/retouch voice, diction, tone, and narration style.'
+              className='nodrag nowheel nopan min-h-18 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none'
+            />
+          </div>
+          <div className='rounded-xl border border-border bg-background px-4 py-3'>
+            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
+              Character Style
+            </p>
+            <textarea
+              value={data.characterStyle}
+              onChange={(event) =>
+                data.onCharacterStyleChange(event.target.value)
+              }
+              placeholder='General character portrayal, voice consistency, and behavior framing.'
+              className='nodrag nowheel nopan min-h-18 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none'
+            />
+          </div>
+          <div className='rounded-xl border border-border bg-background px-4 py-3'>
+            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
+              Art Style
+            </p>
+            <textarea
+              value={data.artStyle}
+              onChange={(event) => data.onArtStyleChange(event.target.value)}
+              placeholder='Visual language, camera mood, palette, and art direction.'
+              className='nodrag nowheel nopan min-h-18 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none'
+            />
+          </div>
+          <div className='rounded-xl border border-border bg-background px-4 py-3'>
+            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
+              Storytelling Pacing
+            </p>
+            <textarea
+              value={data.storytellingPacing}
+              onChange={(event) =>
+                data.onStorytellingPacingChange(event.target.value)
+              }
+              placeholder='Rhythm, beat spacing, tension curve, and cadence guidance.'
+              className='nodrag nowheel nopan min-h-18 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none'
+            />
+          </div>
+          <div className='rounded-xl border border-border bg-background px-4 py-3'>
+            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
+              Additional Style Dimensions
+            </p>
+            <textarea
+              value={data.extrasText}
+              onChange={(event) => data.onExtrasTextChange(event.target.value)}
+              placeholder={
+                'Humor: dry and situational\nDialogue density: sparse but sharp'
+              }
+              className='nodrag nowheel nopan min-h-20 w-full resize-y border-0 bg-transparent font-mono text-sm leading-relaxed text-foreground/90 outline-none'
+            />
+          </div>
+        </div>
       </div>
 
       <div className='mt-3 flex justify-end'>
@@ -479,6 +732,57 @@ function buildCharacterDraftFromRecord(character: CharacterNodeRecord) {
   };
 }
 
+function parseStyleExtrasJson(extrasJson?: string | null) {
+  if (!extrasJson) {
+    return {} as Record<string, string>;
+  }
+
+  try {
+    const parsed = JSON.parse(extrasJson);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {} as Record<string, string>;
+    }
+
+    const extras: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const normalizedKey = key.trim();
+      const normalizedValue = String(value ?? '').trim();
+      if (!normalizedKey || !normalizedValue) {
+        continue;
+      }
+
+      extras[normalizedKey] = normalizedValue;
+    }
+
+    return extras;
+  } catch {
+    return {} as Record<string, string>;
+  }
+}
+
+function buildStyleExtrasText(extras: Record<string, string>) {
+  return Object.entries(extras)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join('\n');
+}
+
+function buildStyleDraftFromRecord(
+  styleNode: StyleNodeRecord,
+): StyleDraftState {
+  return {
+    name: styleNode.name || 'Project Style Guide',
+    writingStyle: styleNode.writingStyle?.trim() || '',
+    characterStyle: styleNode.characterStyle?.trim() || '',
+    artStyle: styleNode.artStyle?.trim() || '',
+    storytellingPacing: styleNode.storytellingPacing?.trim() || '',
+    extrasText: buildStyleExtrasText(
+      parseStyleExtrasJson(styleNode.extrasJson),
+    ),
+    saveState: 'idle',
+    saveMessage: 'Autosave',
+  };
+}
+
 function updateCaptionLines(
   current: CaptionLine[],
   speaker: CaptionSpeaker,
@@ -541,9 +845,11 @@ function extractAudioChunks(payload: unknown): AudioChunk[] {
 
 const StoryImportNode = memo(StoryImportNodeComponent);
 const CharacterCardNode = memo(CharacterCardNodeComponent);
+const StyleCardNode = memo(StyleCardNodeComponent);
 const FLOW_NODE_TYPES = {
   storyImport: StoryImportNode,
   characterCard: CharacterCardNode,
+  styleCard: StyleCardNode,
 };
 
 function extractOutputTranscription(payload: unknown): string | null {
@@ -697,7 +1003,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<CanvasNodeData>>(
     initialNodes as Node<CanvasNodeData>[],
   );
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [micActive, setMicActive] = useState(false);
   const [micError, setMicError] = useState('');
   const [connected, setConnected] = useState(false);
@@ -730,6 +1036,9 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [characterDrafts, setCharacterDrafts] = useState<
     Record<string, CharacterDraftState>
   >({});
+  const [styleDrafts, setStyleDrafts] = useState<
+    Record<string, StyleDraftState>
+  >({});
   const [debugTextInput, setDebugTextInput] = useState('');
   const initialProjectIdRef = useRef(activeProjectId);
   const activeProjectIdRef = useRef(activeProjectId);
@@ -750,11 +1059,14 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const pendingContextSwitchRef = useRef<PendingContextSwitch | null>(null);
   const pendingContextSwitchTimerRef = useRef<number | null>(null);
   const characterAutosaveTimersRef = useRef<Map<string, number>>(new Map());
+  const styleAutosaveTimersRef = useRef<Map<string, number>>(new Map());
   const nodePositionSaveTimersRef = useRef<Map<string, number>>(new Map());
   const lastSavedNodePositionsRef = useRef<
     Record<string, { x: number; y: number }>
   >({});
   const characterDraftsRef = useRef<Record<string, CharacterDraftState>>({});
+  const styleDraftsRef = useRef<Record<string, StyleDraftState>>({});
+  const nodesRef = useRef<Node<CanvasNodeData>[]>([]);
   const micActiveRef = useRef(false);
   const micStartingRef = useRef(false);
   const pttHeldRef = useRef(false);
@@ -905,6 +1217,94 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   }, [characterDrafts]);
 
   useEffect(() => {
+    styleDraftsRef.current = styleDrafts;
+  }, [styleDrafts]);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  const buildAutoStyleEdges = useCallback(
+    (canvasNodes: Node<CanvasNodeData>[]) => {
+      if (!projectGraph) {
+        return [] as Edge[];
+      }
+
+      const edges: Edge[] = [];
+      const styleNodeIds = (projectGraph.styleNodes ?? []).map(
+        (node) => `style-${node.id}`,
+      );
+      const characterNodeIds = (projectGraph.characterNodes ?? []).map(
+        (node) => `character-${node.id}`,
+      );
+      const storyNodeId = projectGraph.story
+        ? `story-${projectGraph.story.id}`
+        : null;
+      const positionById = new Map(
+        canvasNodes.map((node) => [node.id, node.position] as const),
+      );
+
+      styleNodeIds.forEach((sourceStyleId) => {
+        const sourcePosition = positionById.get(sourceStyleId);
+        if (!sourcePosition) {
+          return;
+        }
+
+        if (storyNodeId) {
+          const targetPosition = positionById.get(storyNodeId);
+          if (targetPosition) {
+            const sides = getNearestHandleSides({
+              source: sourcePosition,
+              target: targetPosition,
+            });
+
+            edges.push({
+              id: `edge-${sourceStyleId}-to-${storyNodeId}`,
+              source: sourceStyleId,
+              target: storyNodeId,
+              sourceHandle: getSourceHandleId(sides.source),
+              targetHandle: getTargetHandleId(sides.target),
+              type: 'smoothstep',
+              animated: true,
+              style: { strokeWidth: 2 },
+              selectable: false,
+              deletable: false,
+            });
+          }
+        }
+
+        characterNodeIds.forEach((targetCharacterId) => {
+          const targetPosition = positionById.get(targetCharacterId);
+          if (!targetPosition) {
+            return;
+          }
+
+          const sides = getNearestHandleSides({
+            source: sourcePosition,
+            target: targetPosition,
+          });
+
+          edges.push({
+            id: `edge-${sourceStyleId}-to-${targetCharacterId}`,
+            source: sourceStyleId,
+            target: targetCharacterId,
+            sourceHandle: getSourceHandleId(sides.source),
+            targetHandle: getTargetHandleId(sides.target),
+            type: 'smoothstep',
+            animated: true,
+            style: { strokeWidth: 2 },
+            selectable: false,
+            deletable: false,
+          });
+        });
+      });
+
+      return edges;
+    },
+    [projectGraph],
+  );
+
+  useEffect(() => {
     const projectIdFromUrl = getProjectIdFromSearch(location.search);
     setActiveProjectId(projectIdFromUrl);
   }, [location.search]);
@@ -936,6 +1336,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
   useEffect(() => {
     const autosaveTimers = characterAutosaveTimersRef.current;
+    const styleAutosaveTimers = styleAutosaveTimersRef.current;
 
     const client = createAgentSocket({
       projectId: initialProjectIdRef.current || undefined,
@@ -1220,6 +1621,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         window.clearTimeout(timerId);
       }
       autosaveTimers.clear();
+
+      for (const timerId of styleAutosaveTimers.values()) {
+        window.clearTimeout(timerId);
+      }
+      styleAutosaveTimers.clear();
     };
   }, [
     clearPendingContextSwitchTimer,
@@ -1484,6 +1890,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         window.clearTimeout(timerId);
       }
       characterAutosaveTimersRef.current.clear();
+      for (const timerId of styleAutosaveTimersRef.current.values()) {
+        window.clearTimeout(timerId);
+      }
+      styleAutosaveTimersRef.current.clear();
       for (const timerId of nodePositionSaveTimersRef.current.values()) {
         window.clearTimeout(timerId);
       }
@@ -1567,6 +1977,37 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           name: derived.name,
           description: derived.description,
           traitsText: derived.traitsText,
+          saveState: existing?.saveState === 'saved' ? 'saved' : 'idle',
+          saveMessage: existing?.saveState === 'saved' ? 'Saved' : 'Autosave',
+        };
+      }
+
+      return next;
+    });
+  }, [projectGraph]);
+
+  useEffect(() => {
+    if (!projectGraph?.styleNodes?.length) {
+      setStyleDrafts({});
+      return;
+    }
+
+    setStyleDrafts((current) => {
+      const next: Record<string, StyleDraftState> = {};
+
+      for (const styleNode of projectGraph.styleNodes ?? []) {
+        const existing = current[styleNode.id];
+        if (
+          existing &&
+          (existing.saveState === 'saving' || existing.saveState === 'error')
+        ) {
+          next[styleNode.id] = existing;
+          continue;
+        }
+
+        const derived = buildStyleDraftFromRecord(styleNode);
+        next[styleNode.id] = {
+          ...derived,
           saveState: existing?.saveState === 'saved' ? 'saved' : 'idle',
           saveMessage: existing?.saveState === 'saved' ? 'Saved' : 'Autosave',
         };
@@ -1780,6 +2221,146 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     [queueCharacterAutosave],
   );
 
+  const saveStyleDraft = useCallback(
+    async (styleId: string, draft: StyleDraftState) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) {
+        return;
+      }
+
+      setStyleDrafts((current) => ({
+        ...current,
+        [styleId]: {
+          ...draft,
+          saveState: 'saving',
+          saveMessage: 'Saving...',
+        },
+      }));
+
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/style-nodes/${encodeURIComponent(styleId)}`,
+          {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              name: draft.name,
+              writingStyle: draft.writingStyle,
+              characterStyle: draft.characterStyle,
+              artStyle: draft.artStyle,
+              storytellingPacing: draft.storytellingPacing,
+              extrasText: draft.extrasText,
+            }),
+          },
+        );
+
+        const payload = (await response.json()) as
+          | StyleNodeUpdateResponse
+          | undefined;
+
+        if (!response.ok || !payload?.ok || !payload.node) {
+          throw new Error(payload?.error || 'Failed to save style changes.');
+        }
+
+        setStyleDrafts((current) => ({
+          ...current,
+          [styleId]: {
+            ...draft,
+            saveState: 'saved',
+            saveMessage: 'Saved',
+          },
+        }));
+
+        setProjectGraph((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const nextStyleNodes = (current.styleNodes ?? []).map((node) =>
+            node.id === styleId ? payload.node! : node,
+          );
+
+          return {
+            ...current,
+            styleNodes: nextStyleNodes,
+          };
+        });
+      } catch (error) {
+        setStyleDrafts((current) => ({
+          ...current,
+          [styleId]: {
+            ...draft,
+            saveState: 'error',
+            saveMessage:
+              error instanceof Error
+                ? error.message
+                : 'Failed to save style changes.',
+          },
+        }));
+      }
+    },
+    [activeProjectId],
+  );
+
+  const queueStyleAutosave = useCallback(
+    (styleId: string) => {
+      const existingTimer = styleAutosaveTimersRef.current.get(styleId);
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+
+      const nextTimer = window.setTimeout(() => {
+        const latestDraft = styleDraftsRef.current[styleId];
+        if (!latestDraft) {
+          return;
+        }
+
+        void saveStyleDraft(styleId, latestDraft);
+        styleAutosaveTimersRef.current.delete(styleId);
+      }, 700);
+
+      styleAutosaveTimersRef.current.set(styleId, nextTimer);
+    },
+    [saveStyleDraft],
+  );
+
+  const updateStyleDraftField = useCallback(
+    (
+      styleId: string,
+      field:
+        | 'name'
+        | 'writingStyle'
+        | 'characterStyle'
+        | 'artStyle'
+        | 'storytellingPacing'
+        | 'extrasText',
+      value: string,
+    ) => {
+      setStyleDrafts((current) => {
+        const existing = current[styleId];
+        if (!existing) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [styleId]: {
+            ...existing,
+            [field]: value,
+            saveState: 'idle',
+            saveMessage: 'Autosave pending...',
+          },
+        };
+      });
+
+      queueStyleAutosave(styleId);
+    },
+    [queueStyleAutosave],
+  );
+
   const deleteNodeFromDatabase = useCallback(
     async (nodeId: string) => {
       const projectId = activeProjectId.trim();
@@ -1951,6 +2532,25 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         .map((change) => change.id);
 
       removedNodeIds.forEach((id) => {
+        if (id.startsWith('character-')) {
+          const characterId = id.replace('character-', '');
+          const autosaveTimer =
+            characterAutosaveTimersRef.current.get(characterId);
+          if (autosaveTimer) {
+            window.clearTimeout(autosaveTimer);
+            characterAutosaveTimersRef.current.delete(characterId);
+          }
+        }
+
+        if (id.startsWith('style-')) {
+          const styleId = id.replace('style-', '');
+          const autosaveTimer = styleAutosaveTimersRef.current.get(styleId);
+          if (autosaveTimer) {
+            window.clearTimeout(autosaveTimer);
+            styleAutosaveTimersRef.current.delete(styleId);
+          }
+        }
+
         const timer = nodePositionSaveTimersRef.current.get(id);
         if (timer) {
           window.clearTimeout(timer);
@@ -1966,11 +2566,17 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   useEffect(() => {
     if (!activeProjectId.trim() || !projectGraph) {
       setNodes([]);
+      setEdges([]);
       return;
     }
 
     const nextNodes: Node<CanvasNodeData>[] = [];
     const occupiedCells = new Set<string>();
+    const characterNodes = projectGraph.characterNodes ?? [];
+    const styleNodes = projectGraph.styleNodes ?? [];
+    const hasStyleIncomingConnections = styleNodes.length > 0;
+    const hasStyleOutgoingConnections =
+      Boolean(projectGraph.story) || characterNodes.length > 0;
 
     const resolveNodePosition = (
       positionX: number | null | undefined,
@@ -1998,6 +2604,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     if (projectGraph.story) {
       const nodeData: StoryImportNodeData = {
         activeProjectId,
+        hasIncomingConnection: hasStyleIncomingConnections,
         mode: storyImportMode,
         markdownInput: storyMarkdownInput,
         googleDocUrl: storyGoogleDocUrl,
@@ -2028,7 +2635,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       });
     }
 
-    const characterNodes = projectGraph.characterNodes ?? [];
     characterNodes.forEach((character, index) => {
       const derived = buildCharacterDraftFromRecord(character);
       const draft = characterDrafts[character.id] ?? {
@@ -2052,6 +2658,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         ),
         data: {
           characterId: character.id,
+          hasIncomingConnection: hasStyleIncomingConnections,
           name: draft.name,
           description: draft.description,
           traitsText: draft.traitsText,
@@ -2067,10 +2674,13 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       });
     });
 
-    const styleNodes = projectGraph.styleNodes ?? [];
     styleNodes.forEach((styleNode, index) => {
+      const draft =
+        styleDrafts[styleNode.id] ?? buildStyleDraftFromRecord(styleNode);
+
       nextNodes.push({
         id: `style-${styleNode.id}`,
+        type: 'styleCard',
         position: resolveNodePosition(
           styleNode.positionX,
           styleNode.positionY,
@@ -2080,10 +2690,46 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           },
         ),
         data: {
-          label: styleNode.name,
-          description: styleNode.description,
+          styleId: styleNode.id,
+          hasOutgoingConnection: hasStyleOutgoingConnections,
+          name: draft.name,
+          writingStyle: draft.writingStyle,
+          characterStyle: draft.characterStyle,
+          artStyle: draft.artStyle,
+          storytellingPacing: draft.storytellingPacing,
+          extrasText: draft.extrasText,
+          saveState: draft.saveState,
+          saveMessage: draft.saveMessage,
+          onNameChange: (value: string) =>
+            updateStyleDraftField(styleNode.id, 'name', value),
+          onWritingStyleChange: (value: string) =>
+            updateStyleDraftField(styleNode.id, 'writingStyle', value),
+          onCharacterStyleChange: (value: string) =>
+            updateStyleDraftField(styleNode.id, 'characterStyle', value),
+          onArtStyleChange: (value: string) =>
+            updateStyleDraftField(styleNode.id, 'artStyle', value),
+          onStorytellingPacingChange: (value: string) =>
+            updateStyleDraftField(styleNode.id, 'storytellingPacing', value),
+          onExtrasTextChange: (value: string) =>
+            updateStyleDraftField(styleNode.id, 'extrasText', value),
         },
       });
+    });
+
+    const currentPositionById = new Map(
+      nodesRef.current.map((node) => [node.id, node.position] as const),
+    );
+
+    const finalNodes = nextNodes.map((node) => {
+      const existingPosition = currentPositionById.get(node.id);
+      if (!existingPosition) {
+        return node;
+      }
+
+      return {
+        ...node,
+        position: existingPosition,
+      };
     });
 
     const storyboardNodes = projectGraph.storyboardNodes ?? [];
@@ -2105,25 +2751,13 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       });
     });
 
-    setNodes((current) => {
-      const positionById = new Map(
-        current.map((node) => [node.id, node.position] as const),
-      );
+    setNodes(finalNodes);
 
-      return nextNodes.map((node) => {
-        const existingPosition = positionById.get(node.id);
-        if (!existingPosition) {
-          return node;
-        }
-
-        return {
-          ...node,
-          position: existingPosition,
-        };
-      });
-    });
+    setEdges(buildAutoStyleEdges(finalNodes));
   }, [
     activeProjectId,
+    buildAutoStyleEdges,
+    setEdges,
     importStoryForActiveProject,
     projectGraph,
     setNodes,
@@ -2134,8 +2768,18 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     storyImportStatus,
     storyMarkdownInput,
     characterDrafts,
+    styleDrafts,
     updateCharacterDraftField,
+    updateStyleDraftField,
   ]);
+
+  useEffect(() => {
+    if (!activeProjectId.trim() || !projectGraph) {
+      return;
+    }
+
+    setEdges(buildAutoStyleEdges(nodes));
+  }, [activeProjectId, buildAutoStyleEdges, nodes, projectGraph, setEdges]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

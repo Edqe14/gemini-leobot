@@ -220,6 +220,9 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
                   'sync_story_node',
                   'generate_character_brief',
                   'generate_character_inspiration',
+                  'get_project_style_node',
+                  'upsert_project_style_node',
+                  'refine_project_style_node',
                   'generate_storyboard',
                 ].includes(toolName);
 

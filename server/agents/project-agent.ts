@@ -4,9 +4,12 @@ import {
   createStoryNodeTool,
   generateCharacterBriefTool,
   generateCharacterInspirationTool,
+  getProjectStyleNodeTool,
+  refineProjectStyleNodeTool,
   generateStoryboardTool,
   listProjectsTool,
   syncStoryNodeTool,
+  upsertProjectStyleNodeTool,
 } from '../services/tools';
 
 export const ProjectAgent: AgentDefinition = {
@@ -179,7 +182,7 @@ export const ProjectAgent: AgentDefinition = {
     {
       name: 'generate_character_inspiration',
       description:
-        'Create a style/inspiration node for the active project based on provided style direction.',
+        'Legacy alias. Upsert the canonical project style node based on provided style direction.',
       parameters: {
         type: Type.OBJECT,
         properties: {
@@ -194,6 +197,95 @@ export const ProjectAgent: AgentDefinition = {
         },
       },
       handler: generateCharacterInspirationTool,
+    },
+    {
+      name: 'get_project_style_node',
+      description:
+        'Get (or initialize) the canonical style node in the active project context.',
+      handler: getProjectStyleNodeTool,
+    },
+    {
+      name: 'upsert_project_style_node',
+      description:
+        'Directly update the canonical project style node for writing style, character style, art style, pacing, and extras.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          writingStyle: {
+            type: Type.STRING,
+            description:
+              'Style direction for prose, tone, and rewrite/retouch language.',
+          },
+          characterStyle: {
+            type: Type.STRING,
+            description: 'General character portrayal and voice direction.',
+          },
+          artStyle: {
+            type: Type.STRING,
+            description: 'Visual and art-direction style guidance.',
+          },
+          storytellingPacing: {
+            type: Type.STRING,
+            description: 'Pacing/rhythm guidance for narrative flow.',
+          },
+          extras: {
+            type: Type.OBJECT,
+            description: 'Additional style dimensions as key/value text pairs.',
+          },
+          styleName: {
+            type: Type.STRING,
+            description: 'Optional display title for the style node.',
+          },
+          replace: {
+            type: Type.BOOLEAN,
+            description:
+              'Optional. If true, replace the style payload instead of merging with existing fields.',
+          },
+        },
+      },
+      handler: upsertProjectStyleNodeTool,
+    },
+    {
+      name: 'refine_project_style_node',
+      description:
+        'Refine the canonical style node from a natural-language change request. Large rewrite intent may route through a style sub-agent.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          request: {
+            type: Type.STRING,
+            description:
+              'User request describing how to adjust project style direction.',
+          },
+          writingStyle: {
+            type: Type.STRING,
+            description: 'Optional explicit writing style override.',
+          },
+          characterStyle: {
+            type: Type.STRING,
+            description: 'Optional explicit character style override.',
+          },
+          artStyle: {
+            type: Type.STRING,
+            description: 'Optional explicit art style override.',
+          },
+          storytellingPacing: {
+            type: Type.STRING,
+            description: 'Optional explicit storytelling pacing override.',
+          },
+          extras: {
+            type: Type.OBJECT,
+            description: 'Optional additional style dimension updates.',
+          },
+          replace: {
+            type: Type.BOOLEAN,
+            description:
+              'Optional. If true, replace style content instead of merging into current style.',
+          },
+        },
+        required: ['request'],
+      },
+      handler: refineProjectStyleNodeTool,
     },
     {
       name: 'generate_storyboard',
@@ -227,11 +319,17 @@ export const ProjectAgent: AgentDefinition = {
     'generate_character_brief derives story-based drafts with a separate non-live completion sub-agent and uses active story markdown as input context.',
     'generate_character_brief returns storyContext (title + markdown). Use it as source-of-truth context when drafting or revising character briefs in follow-up responses.',
     'When deriving characters from story text, include only actors/people participating in events. Exclude product names, tools, platforms, locations, organizations, and other non-character entities.',
+    'Style direction is project context. Resolve canonical style state with get_project_style_node before major rewrite/retouch guidance.',
+    'When the user asks to create/update/adjust style guidance, always execute a mutating style tool (upsert_project_style_node or refine_project_style_node) before responding.',
+    'For small explicit style edits, call upsert_project_style_node directly.',
+    'For large rewrite-intent style requests (overhaul/rework/rewrite/retone/major shift), call refine_project_style_node so sub-agent refinement can run when appropriate.',
+    'After style updates, summarize what changed in writingStyle, characterStyle, artStyle, and storytellingPacing.',
   ],
   capabilities: [
     '1. Create story nodes and prepare project story workspace.',
     '2. Generate character brief nodes from story context.',
     '3. Generate character design/style inspiration nodes.',
+    '3a. Maintain one evolving project style node for writing, character, art, pacing, and extra style dimensions.',
     '4. Generate storyboard draft nodes and shot outlines.',
     '5. Keep collaborating through short iterative creative direction.',
   ],
