@@ -2254,6 +2254,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           nodeTypes={FLOW_NODE_TYPES}
           onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
+          panOnScroll
+          zoomOnScroll={false}
+          zoomOnDoubleClick={false}
+          zoomOnPinch
           defaultViewport={{ x: 0, y: 0, zoom: 0.72 }}
           minZoom={0.35}
           maxZoom={1.2}
