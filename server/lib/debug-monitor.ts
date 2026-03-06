@@ -24,6 +24,11 @@ type MonitorEvent = {
   detail: Record<string, unknown>;
 };
 
+type MonitorEventQueryOptions = {
+  importantOnly?: boolean;
+  includeAudioChunkEvents?: boolean;
+};
+
 type SessionStatus = 'active' | 'closed';
 type VoiceState = 'idle' | 'active';
 
@@ -62,6 +67,23 @@ type SessionUpdateInput = {
 };
 
 const MAX_SNIPPET_LENGTH = 280;
+
+const IMPORTANT_EVENT_TYPES = new Set<MonitorEventType>([
+  'session.open',
+  'session.close',
+  'session.update',
+  'connection.unauthorized',
+  'gemini.error',
+  'agent.start',
+  'agent.end',
+  'response.text',
+]);
+
+const AUDIO_NOISE_ACTION_PREFIXES = [
+  'gemini.realtimeInput',
+  'ws.audio.ingested',
+  'gemini.voiceActivity',
+];
 
 const state = {
   sessions: new Map<string, MonitorSessionInternal>(),
@@ -162,6 +184,57 @@ function toPublicSession(session: MonitorSessionInternal): SessionState {
 
 function getSession(sessionId: string) {
   return state.sessions.get(sessionId);
+}
+
+function isAudioNoiseEvent(event: MonitorEvent): boolean {
+  if (event.type === 'voice.activity') {
+    return true;
+  }
+
+  if (event.type !== 'action.received' && event.type !== 'action.sent') {
+    return false;
+  }
+
+  const actionType = event.detail.actionType;
+  if (typeof actionType !== 'string') {
+    return false;
+  }
+
+  return AUDIO_NOISE_ACTION_PREFIXES.some((prefix) =>
+    actionType.startsWith(prefix),
+  );
+}
+
+function isImportantEvent(event: MonitorEvent): boolean {
+  if (IMPORTANT_EVENT_TYPES.has(event.type)) {
+    return true;
+  }
+
+  if (event.type === 'action.sent' || event.type === 'action.received') {
+    const actionType = event.detail.actionType;
+    if (typeof actionType !== 'string') {
+      return false;
+    }
+
+    return (
+      actionType === 'gemini.error' ||
+      actionType === 'gemini.toolResponse' ||
+      actionType === 'agent.session.rotated' ||
+      actionType === 'agent.context.updated'
+    );
+  }
+
+  if (event.type === 'gemini.message') {
+    const detailMessage = event.detail.message;
+    if (!detailMessage || typeof detailMessage !== 'object') {
+      return false;
+    }
+
+    const message = detailMessage as Record<string, unknown>;
+    return Boolean(message.toolCall);
+  }
+
+  return false;
 }
 
 function extractMessageTextParts(message: unknown): string[] {
@@ -519,7 +592,24 @@ export function getDebugMonitorSnapshot() {
   };
 }
 
-export function getDebugMonitorEvents(limit = 100) {
+export function getDebugMonitorEvents(
+  limit = 100,
+  options: MonitorEventQueryOptions = {},
+) {
   const safeLimit = Math.max(1, Math.min(limit, env.DEBUG_MONITOR_MAX_EVENTS));
-  return state.events.slice(-safeLimit);
+  const { importantOnly = false, includeAudioChunkEvents = false } = options;
+
+  const filtered = state.events.filter((event) => {
+    if (!includeAudioChunkEvents && isAudioNoiseEvent(event)) {
+      return false;
+    }
+
+    if (importantOnly && !isImportantEvent(event)) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return filtered.slice(-safeLimit);
 }
