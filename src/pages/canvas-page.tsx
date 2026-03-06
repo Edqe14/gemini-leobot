@@ -258,7 +258,6 @@ type StoryImportNodeData = {
   onModeChange: (mode: StoryImportMode) => void;
   onMarkdownChange: (value: string) => void;
   onGoogleDocUrlChange: (value: string) => void;
-  onSave: () => void;
   onFetchGoogleDocs: () => void;
 };
 
@@ -406,11 +405,8 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
           />
         </>
       ) : null}
-      <div className='mb-3 flex items-center justify-between gap-3'>
-        <p className='text-sm font-semibold'>Import Story</p>
-        <Badge variant='outline'>
-          project {nodeData.activeProjectId ? 'ready' : 'unset'}
-        </Badge>
+      <div className='mb-3'>
+        <p className='text-sm font-semibold'>Story</p>
       </div>
 
       <div className='mb-3 flex items-center gap-2'>
@@ -446,13 +442,6 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
             placeholder='Paste your markdown story here...'
             className='nodrag nowheel nopan h-64 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm'
           />
-          <Button
-            type='button'
-            className='nodrag w-full bg-primary/90 text-primary-foreground hover:bg-primary'
-            disabled={nodeData.busy || !nodeData.activeProjectId.trim()}
-            onClick={nodeData.onSave}>
-            {nodeData.busy ? 'Saving...' : 'Save Story'}
-          </Button>
         </div>
       ) : (
         <div className='space-y-3'>
@@ -475,11 +464,24 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
         </div>
       )}
 
-      {nodeData.status ? (
+      {nodeData.status && nodeData.mode !== 'markdown' ? (
         <p className='mt-2 text-xs text-muted-foreground'>{nodeData.status}</p>
       ) : null}
       {nodeData.error ? (
         <p className='mt-2 text-xs text-destructive'>{nodeData.error}</p>
+      ) : null}
+      {nodeData.mode === 'markdown' ? (
+        <div className='mt-3 flex justify-end'>
+          <p className='text-xs text-muted-foreground'>
+            {nodeData.busy
+              ? 'Saving...'
+              : nodeData.status === 'Autosaved'
+                ? 'Saved'
+                : nodeData.status === 'Autosave failed'
+                  ? 'Save failed'
+                  : nodeData.status || 'Autosave'}
+          </p>
+        </div>
       ) : null}
     </Card>
   );
@@ -1458,6 +1460,8 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const characterAutosaveTimersRef = useRef<Map<string, number>>(new Map());
   const styleAutosaveTimersRef = useRef<Map<string, number>>(new Map());
   const nodePositionSaveTimersRef = useRef<Map<string, number>>(new Map());
+  const storyAutosaveTimerRef = useRef<number | null>(null);
+  const lastSavedStoryMarkdownRef = useRef('');
   const lastSavedNodePositionsRef = useRef<
     Record<string, { x: number; y: number }>
   >({});
@@ -2526,6 +2530,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         window.clearTimeout(timerId);
       }
       nodePositionSaveTimersRef.current.clear();
+      if (storyAutosaveTimerRef.current) {
+        window.clearTimeout(storyAutosaveTimerRef.current);
+        storyAutosaveTimerRef.current = null;
+      }
+      lastSavedStoryMarkdownRef.current = '';
       lastSavedNodePositionsRef.current = {};
       setStoryMarkdownInput('');
       setStoryGoogleDocUrl('');
@@ -2558,6 +2567,9 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         const existingStory = project?.story;
         setStoryMarkdownInput(existingStory?.markdown ?? '');
         setStoryGoogleDocUrl(existingStory?.sourceDocUrl ?? '');
+        lastSavedStoryMarkdownRef.current = (
+          existingStory?.markdown ?? ''
+        ).trim();
         setStoryImportStatus('');
         setStoryImportError('');
       })
@@ -2730,23 +2742,72 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         if (story) {
           setStoryMarkdownInput(story.markdown ?? markdown);
           setStoryGoogleDocUrl(story.sourceDocUrl ?? sourceUrl);
+          lastSavedStoryMarkdownRef.current = (
+            story.markdown ?? markdown
+          ).trim();
+        } else if (mode === 'markdown') {
+          lastSavedStoryMarkdownRef.current = markdown;
         }
 
         setStoryImportStatus(
           mode === 'google_docs'
             ? 'Story fetched from Google Docs and saved.'
-            : 'Story markdown saved.',
+            : 'Autosaved',
         );
       } catch (error) {
         setStoryImportError(
           error instanceof Error ? error.message : 'Story import failed.',
         );
+        if (mode === 'markdown') {
+          setStoryImportStatus('Autosave failed');
+        }
       } finally {
         setStoryImportBusy(false);
       }
     },
     [activeProjectId, storyGoogleDocUrl, storyMarkdownInput],
   );
+
+  useEffect(() => {
+    const projectId = activeProjectId.trim();
+    const markdown = storyMarkdownInput.trim();
+
+    if (storyAutosaveTimerRef.current) {
+      window.clearTimeout(storyAutosaveTimerRef.current);
+      storyAutosaveTimerRef.current = null;
+    }
+
+    if (
+      !projectId ||
+      storyImportMode !== 'markdown' ||
+      storyImportBusy ||
+      !markdown ||
+      markdown === lastSavedStoryMarkdownRef.current
+    ) {
+      return;
+    }
+
+    setStoryImportStatus('Autosave pending...');
+    setStoryImportError('');
+
+    storyAutosaveTimerRef.current = window.setTimeout(() => {
+      void importStoryForActiveProject('markdown');
+      storyAutosaveTimerRef.current = null;
+    }, 700);
+
+    return () => {
+      if (storyAutosaveTimerRef.current) {
+        window.clearTimeout(storyAutosaveTimerRef.current);
+        storyAutosaveTimerRef.current = null;
+      }
+    };
+  }, [
+    activeProjectId,
+    importStoryForActiveProject,
+    storyImportBusy,
+    storyImportMode,
+    storyMarkdownInput,
+  ]);
 
   const saveCharacterDraft = useCallback(
     async (characterId: string, draft: CharacterDraftState) => {
@@ -3493,12 +3554,13 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         busy: storyImportBusy,
         status: storyImportStatus,
         error: storyImportError,
-        onModeChange: setStoryImportMode,
+        onModeChange: (mode) => {
+          setStoryImportMode(mode);
+          setStoryImportStatus('');
+          setStoryImportError('');
+        },
         onMarkdownChange: setStoryMarkdownInput,
         onGoogleDocUrlChange: setStoryGoogleDocUrl,
-        onSave: () => {
-          void importStoryForActiveProject('markdown');
-        },
         onFetchGoogleDocs: () => {
           void importStoryForActiveProject('google_docs');
         },

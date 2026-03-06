@@ -235,6 +235,26 @@ const characterDesignToolArgsSchema = z.object({
   replaceExisting: z.boolean().optional(),
 });
 
+const characterBriefUpdateArgsSchema = z
+  .object({
+    characterNodeId: z.string().trim().min(1).optional(),
+    nextName: z.string().trim().min(1).max(120).optional(),
+    description: z.string().trim().max(8000).optional(),
+    brief: z.string().trim().max(8000).optional(),
+    briefMarkdown: z.string().trim().max(8000).optional(),
+    headImageUrl: z.string().trim().max(2048).optional(),
+    traits: z.record(z.string(), z.unknown()).optional(),
+    behavior: z.string().trim().max(8000).optional(),
+    style: z.string().trim().max(8000).optional(),
+    personality: z.string().trim().max(8000).optional(),
+    goals: z.string().trim().max(8000).optional(),
+    notes: z.string().trim().max(8000).optional(),
+  })
+  .refine((value) => Boolean(value.characterNodeId), {
+    message: 'Provide characterNodeId to identify which node to update.',
+    path: ['characterNodeId'],
+  });
+
 const styleTextSchema = z.string().trim().max(8000);
 
 const styleExtrasSchema = z.record(z.string(), z.unknown());
@@ -2144,6 +2164,49 @@ export async function listProjectsTool(context: ToolContext) {
   };
 }
 
+export async function listCharacterNodesTool(context: ToolContext) {
+  const projectAccess = await verifyProjectAccess(context);
+  if (!projectAccess.ok) {
+    return projectAccess;
+  }
+
+  const projectId = context.projectId;
+  if (!projectId) {
+    return {
+      ok: false,
+      message: 'Active project was not found for this user.',
+    };
+  }
+
+  const nodes = await prisma.characterNode.findMany({
+    where: {
+      projectId,
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+    select: {
+      id: true,
+      name: true,
+      briefMarkdown: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return {
+    ok: true,
+    count: nodes.length,
+    characterNodes: nodes.map((node) => ({
+      id: node.id,
+      name: node.name,
+      createdAt: node.createdAt,
+      updatedAt: node.updatedAt,
+      briefPreview: node.briefMarkdown.slice(0, 180),
+    })),
+  };
+}
+
 export async function generateCharacterBriefTool(context: ToolContext) {
   const projectAccess = await verifyProjectAccess(context);
   if (!projectAccess.ok) {
@@ -2226,6 +2289,53 @@ export async function generateCharacterBriefTool(context: ToolContext) {
     derivedFromStory = true;
   }
 
+  const seenDraftNames = new Set<string>();
+  const skippedDuplicateInputNames: string[] = [];
+  const uniqueDrafts: CharacterDraftInput[] = [];
+  for (const draft of drafts) {
+    const normalizedName = draft.name.trim().toLowerCase();
+    if (!normalizedName) {
+      continue;
+    }
+
+    if (seenDraftNames.has(normalizedName)) {
+      skippedDuplicateInputNames.push(draft.name);
+      continue;
+    }
+
+    seenDraftNames.add(normalizedName);
+    uniqueDrafts.push(draft);
+  }
+
+  const existingCharacterNodes = await prisma.characterNode.findMany({
+    where: {
+      projectId,
+    },
+    select: {
+      name: true,
+    },
+  });
+  const existingNames = new Set(
+    existingCharacterNodes
+      .map((node) => node.name.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  const skippedExistingNames: string[] = [];
+  const draftsToCreate = uniqueDrafts.filter((draft) => {
+    const normalizedName = draft.name.trim().toLowerCase();
+    if (!normalizedName) {
+      return false;
+    }
+
+    if (existingNames.has(normalizedName)) {
+      skippedExistingNames.push(draft.name);
+      return false;
+    }
+
+    return true;
+  });
+
   const createdNodes: Array<{
     id: string;
     projectId: string;
@@ -2239,10 +2349,10 @@ export async function generateCharacterBriefTool(context: ToolContext) {
   }> = [];
   const allocatedPositions = await allocateNodePositions(
     projectId,
-    drafts.length,
+    draftsToCreate.length,
   );
 
-  for (const [index, draft] of drafts.entries()) {
+  for (const [index, draft] of draftsToCreate.entries()) {
     const allocatedPosition = allocatedPositions[index];
     const briefMarkdown = buildCharacterBriefMarkdown(draft);
     const profileJson = Object.keys(draft.profile).length
@@ -2293,13 +2403,24 @@ export async function generateCharacterBriefTool(context: ToolContext) {
   });
 
   const createdCount = createdNodes.length;
-  const message = derivedFromStory
+  const skippedCount =
+    skippedExistingNames.length + skippedDuplicateInputNames.length;
+
+  let message = derivedFromStory
     ? createdCount === 1
       ? 'Derived 1 character from the active story node and created its brief node.'
-      : `Derived ${createdCount} characters from the active story node and created their brief nodes.`
+      : createdCount > 1
+        ? `Derived ${createdCount} characters from the active story node and created their brief nodes.`
+        : 'No new character brief nodes were created because matching characters already exist.'
     : createdCount === 1
       ? 'Created 1 character brief node for the active project.'
-      : `Created ${createdCount} character brief nodes for the active project.`;
+      : createdCount > 1
+        ? `Created ${createdCount} character brief nodes for the active project.`
+        : 'No new character brief nodes were created because matching characters already exist.';
+
+  if (skippedCount > 0) {
+    message = `${message} Skipped ${skippedCount} duplicate character name${skippedCount === 1 ? '' : 's'}.`;
+  }
 
   return {
     ok: true,
@@ -2307,10 +2428,318 @@ export async function generateCharacterBriefTool(context: ToolContext) {
     storyContext,
     createdCount,
     createdNodes,
+    skippedCount,
+    skippedExistingNames,
+    skippedDuplicateInputNames,
     relatedNodes: {
       characterNodeIds:
         projectGraph?.characterNodes.map((node) => node.id) ??
         createdNodes.map((node) => node.id),
+    },
+  };
+}
+
+export async function updateCharacterBriefTool(context: ToolContext) {
+  const projectAccess = await verifyProjectAccess(context);
+  if (!projectAccess.ok) {
+    return projectAccess;
+  }
+
+  const projectId = context.projectId;
+  if (!projectId) {
+    return {
+      ok: false,
+      message: 'Active project was not found for this user.',
+    };
+  }
+
+  const parsedArgs = characterBriefUpdateArgsSchema.safeParse(context.args);
+  if (!parsedArgs.success) {
+    return {
+      ok: false,
+      message: 'Invalid payload for update_character_brief.',
+      issues: formatValidationIssues(parsedArgs.error.issues),
+    };
+  }
+
+  const args = parsedArgs.data;
+  const targetById = normalizeStringValue(args.characterNodeId);
+  const hasAnyPatchField =
+    Object.prototype.hasOwnProperty.call(context.args, 'nextName') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'description') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'brief') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'briefMarkdown') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'headImageUrl') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'traits') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'behavior') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'style') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'personality') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'goals') ||
+    Object.prototype.hasOwnProperty.call(context.args, 'notes');
+
+  if (!hasAnyPatchField) {
+    return {
+      ok: false,
+      message:
+        'update_character_brief requires at least one field to update (for example: brief, behavior, style, or notes).',
+    };
+  }
+
+  if (!targetById) {
+    return {
+      ok: false,
+      message:
+        'update_character_brief requires characterNodeId. Call list_character_nodes first to find the correct node ID.',
+    };
+  }
+
+  let existingNode: {
+    id: string;
+    name: string;
+    briefMarkdown: string;
+    profileJson: string | null;
+    inspirationPrompt: string | null;
+    inspirationUrls: string[];
+    createdAt: Date;
+    updatedAt: Date;
+  } | null = null;
+  existingNode = await prisma.characterNode.findFirst({
+    where: {
+      id: targetById,
+      projectId,
+    },
+    select: {
+      id: true,
+      name: true,
+      briefMarkdown: true,
+      profileJson: true,
+      inspirationPrompt: true,
+      inspirationUrls: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  if (!existingNode) {
+    return {
+      ok: false,
+      message: `Character node "${targetById}" was not found in the active project.`,
+    };
+  }
+
+  const currentProfile = parseCharacterProfileRecord(existingNode.profileJson);
+  const currentAttributes =
+    currentProfile.attributes && typeof currentProfile.attributes === 'object'
+      ? { ...currentProfile.attributes }
+      : ({} as Record<string, string>);
+
+  const nextName =
+    Object.prototype.hasOwnProperty.call(context.args, 'nextName') &&
+    typeof args.nextName === 'string'
+      ? args.nextName
+      : existingNode.name;
+
+  const description =
+    Object.prototype.hasOwnProperty.call(context.args, 'description') &&
+    typeof args.description === 'string'
+      ? args.description
+      : normalizeStringValue(currentProfile.description);
+  const headImageUrl =
+    Object.prototype.hasOwnProperty.call(context.args, 'headImageUrl') &&
+    typeof args.headImageUrl === 'string'
+      ? args.headImageUrl
+      : normalizeStringValue(currentProfile.headImageUrl);
+  const currentBehavior = normalizeStringValue(currentProfile.behavior);
+  const currentStyle = normalizeStringValue(currentProfile.style);
+  const currentPersonality = normalizeStringValue(currentProfile.personality);
+  const currentGoals = normalizeStringValue(currentProfile.goals);
+  const currentNotes = normalizeStringValue(currentProfile.notes);
+
+  const incomingTraits =
+    args.traits && typeof args.traits === 'object'
+      ? (args.traits as Record<string, unknown>)
+      : null;
+
+  const traitBehavior = incomingTraits
+    ? normalizeStringValue(incomingTraits.behavior || incomingTraits.behaviour)
+    : '';
+  const traitStyle = incomingTraits
+    ? normalizeStringValue(incomingTraits.style)
+    : '';
+  const traitPersonality = incomingTraits
+    ? normalizeStringValue(incomingTraits.personality)
+    : '';
+  const traitGoals = incomingTraits
+    ? normalizeStringValue(incomingTraits.goals)
+    : '';
+  const traitNotes = incomingTraits
+    ? normalizeStringValue(incomingTraits.notes)
+    : '';
+
+  const hasBehaviorArg = Object.prototype.hasOwnProperty.call(
+    context.args,
+    'behavior',
+  );
+  const hasStyleArg = Object.prototype.hasOwnProperty.call(
+    context.args,
+    'style',
+  );
+  const hasPersonalityArg = Object.prototype.hasOwnProperty.call(
+    context.args,
+    'personality',
+  );
+  const hasGoalsArg = Object.prototype.hasOwnProperty.call(
+    context.args,
+    'goals',
+  );
+  const hasNotesArg = Object.prototype.hasOwnProperty.call(
+    context.args,
+    'notes',
+  );
+
+  const hasTraitBehavior =
+    incomingTraits !== null &&
+    ('behavior' in incomingTraits || 'behaviour' in incomingTraits);
+  const hasTraitStyle = incomingTraits !== null && 'style' in incomingTraits;
+  const hasTraitPersonality =
+    incomingTraits !== null && 'personality' in incomingTraits;
+  const hasTraitGoals = incomingTraits !== null && 'goals' in incomingTraits;
+  const hasTraitNotes = incomingTraits !== null && 'notes' in incomingTraits;
+
+  const behavior = hasBehaviorArg
+    ? normalizeStringValue(args.behavior)
+    : hasTraitBehavior
+      ? traitBehavior
+      : currentBehavior;
+  const style = hasStyleArg
+    ? normalizeStringValue(args.style)
+    : hasTraitStyle
+      ? traitStyle
+      : currentStyle;
+  const personality = hasPersonalityArg
+    ? normalizeStringValue(args.personality)
+    : hasTraitPersonality
+      ? traitPersonality
+      : currentPersonality;
+  const goals = hasGoalsArg
+    ? normalizeStringValue(args.goals)
+    : hasTraitGoals
+      ? traitGoals
+      : currentGoals;
+  const notes = hasNotesArg
+    ? normalizeStringValue(args.notes)
+    : hasTraitNotes
+      ? traitNotes
+      : currentNotes;
+
+  const mergedProfile: CharacterProfilePayload = {
+    ...currentProfile,
+    description,
+    headImageUrl,
+    behavior,
+    style,
+    personality,
+    goals,
+    notes,
+  };
+
+  if (incomingTraits) {
+    for (const [key, value] of Object.entries(incomingTraits)) {
+      const normalizedKey = key.trim();
+      if (!normalizedKey || CHARACTER_CANONICAL_KEYS.has(normalizedKey)) {
+        continue;
+      }
+
+      const normalizedValue = stringifyUnknownValue(value);
+      if (!normalizedValue) {
+        continue;
+      }
+
+      currentAttributes[normalizedKey] = normalizedValue;
+    }
+  }
+
+  if (Object.keys(currentAttributes).length) {
+    mergedProfile.attributes = currentAttributes;
+  }
+
+  if (!description) {
+    delete mergedProfile.description;
+  }
+  if (!headImageUrl) {
+    delete mergedProfile.headImageUrl;
+  }
+  if (!mergedProfile.behavior) {
+    delete mergedProfile.behavior;
+  }
+  if (!mergedProfile.style) {
+    delete mergedProfile.style;
+  }
+  if (!mergedProfile.personality) {
+    delete mergedProfile.personality;
+  }
+  if (!mergedProfile.goals) {
+    delete mergedProfile.goals;
+  }
+  if (!mergedProfile.notes) {
+    delete mergedProfile.notes;
+  }
+
+  const briefOverride =
+    (Object.prototype.hasOwnProperty.call(context.args, 'brief') &&
+      typeof args.brief === 'string') ||
+    (Object.prototype.hasOwnProperty.call(context.args, 'briefMarkdown') &&
+      typeof args.briefMarkdown === 'string')
+      ? normalizeStringValue(args.brief || args.briefMarkdown)
+      : null;
+
+  const generatedDraft = parseCharacterDraft({
+    name: nextName,
+    description,
+    headImageUrl,
+    behavior: mergedProfile.behavior,
+    style: mergedProfile.style,
+    personality: mergedProfile.personality,
+    goals: mergedProfile.goals,
+    notes: mergedProfile.notes,
+    traits: mergedProfile.attributes,
+  });
+
+  const nextBriefMarkdown =
+    briefOverride !== null
+      ? briefOverride
+      : generatedDraft
+        ? buildCharacterBriefMarkdown(generatedDraft)
+        : existingNode.briefMarkdown;
+
+  const updated = await prisma.characterNode.update({
+    where: {
+      id: existingNode.id,
+    },
+    data: {
+      name: nextName,
+      briefMarkdown: nextBriefMarkdown,
+      profileJson: JSON.stringify(mergedProfile),
+    },
+    select: {
+      id: true,
+      projectId: true,
+      name: true,
+      briefMarkdown: true,
+      profileJson: true,
+      inspirationPrompt: true,
+      inspirationUrls: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return {
+    ok: true,
+    message: `Updated character brief for "${updated.name}".`,
+    updatedNode: updated,
+    matchInfo: {
+      matchedBy: 'characterNodeId',
     },
   };
 }

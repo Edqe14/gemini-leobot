@@ -47,6 +47,7 @@ const ai = new GoogleGenAI(getGoogleGenAIOptions());
 // Async function-calling: keep conversation/audio flowing while heavier tools run.
 const NON_BLOCKING_TOOL_NAMES = new Set([
   'generate_character_brief',
+  'update_character_brief',
   'generate_character_design',
   'generate_character_inspiration',
   'upsert_project_style_node',
@@ -259,6 +260,7 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
                   'create_story_node',
                   'sync_story_node',
                   'generate_character_brief',
+                  'update_character_brief',
                   'generate_character_design',
                   'generate_character_inspiration',
                   'get_project_style_node',

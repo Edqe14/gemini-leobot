@@ -6,10 +6,12 @@ import {
   generateCharacterBriefTool,
   generateCharacterInspirationTool,
   getProjectStyleNodeTool,
+  listCharacterNodesTool,
   refineProjectStyleNodeTool,
   generateStoryboardTool,
   listProjectsTool,
   syncStoryNodeTool,
+  updateCharacterBriefTool,
   upsertProjectStyleNodeTool,
 } from '../services/tools';
 
@@ -78,7 +80,7 @@ export const ProjectAgent: AgentDefinition = {
     {
       name: 'generate_character_brief',
       description:
-        'Create one or more character brief nodes in the active project, including behavior/style/personality details.',
+        'Create one or more new character brief nodes in the active project, including behavior/style/personality details.',
       parameters: {
         type: Type.OBJECT,
         properties: {
@@ -179,6 +181,97 @@ export const ProjectAgent: AgentDefinition = {
         },
       },
       handler: generateCharacterBriefTool,
+    },
+    {
+      name: 'list_character_nodes',
+      description:
+        'List character nodes in the active project, including characterNodeId and name, so follow-up tools can target exact IDs.',
+      handler: listCharacterNodesTool,
+    },
+    {
+      name: 'update_character_brief',
+      description:
+        'Update an existing character brief node by characterNodeId. Use this for revisions instead of creating a new brief node.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          characterNodeId: {
+            type: Type.STRING,
+            description: 'Exact character node ID to update. Required.',
+          },
+          nextName: {
+            type: Type.STRING,
+            description:
+              'Optional new character name if the brief should be renamed.',
+          },
+          description: {
+            type: Type.STRING,
+            description: 'Optional description update for the character.',
+          },
+          brief: {
+            type: Type.STRING,
+            description:
+              'Optional full brief markdown replacement. If omitted, brief text is rebuilt from structured fields.',
+          },
+          briefMarkdown: {
+            type: Type.STRING,
+            description:
+              'Alias for brief. Optional full brief markdown replacement.',
+          },
+          headImageUrl: {
+            type: Type.STRING,
+            description: 'Optional character head image URL update.',
+          },
+          traits: {
+            type: Type.OBJECT,
+            description:
+              'Optional structured trait updates including behavior/style/personality/goals/notes and extra attributes.',
+            properties: {
+              behavior: {
+                type: Type.STRING,
+                description: 'Behavioral traits and tendencies.',
+              },
+              style: {
+                type: Type.STRING,
+                description: 'Visual style or design direction.',
+              },
+              personality: {
+                type: Type.STRING,
+                description: 'Personality summary.',
+              },
+              goals: {
+                type: Type.STRING,
+                description: 'Character goals, motivations, or arc direction.',
+              },
+              notes: {
+                type: Type.STRING,
+                description: 'Additional notes.',
+              },
+            },
+          },
+          behavior: {
+            type: Type.STRING,
+            description: 'Optional direct behavior field update.',
+          },
+          style: {
+            type: Type.STRING,
+            description: 'Optional direct style field update.',
+          },
+          personality: {
+            type: Type.STRING,
+            description: 'Optional direct personality field update.',
+          },
+          goals: {
+            type: Type.STRING,
+            description: 'Optional direct goals field update.',
+          },
+          notes: {
+            type: Type.STRING,
+            description: 'Optional direct notes field update.',
+          },
+        },
+      },
+      handler: updateCharacterBriefTool,
     },
     {
       name: 'generate_character_design',
@@ -343,6 +436,8 @@ export const ProjectAgent: AgentDefinition = {
     'Before claiming a story node was updated (especially for markdown/google docs story workflows), call sync_story_node first and use the returned sync.resolvedStoryNodeId in your response.',
     'If sync_story_node reports requestedNodeMissing=true, clearly tell the user the previous node ID no longer exists and provide the resolvedStoryNodeId.',
     'When asked to generate character briefs from the story, call generate_character_brief without explicit names (or with fromStory=true) so it derives characters from the active story node.',
+    'Before calling update_character_brief, call list_character_nodes to get the exact characterNodeId.',
+    'When the user asks to revise or update an existing character brief, call update_character_brief using characterNodeId (not name matching and not generate_character_brief).',
     'generate_character_brief derives story-based drafts with a separate non-live completion sub-agent and uses active story markdown as input context.',
     'generate_character_brief returns storyContext (title + markdown). Use it as source-of-truth context when drafting or revising character briefs in follow-up responses.',
     'When deriving characters from story text, include only actors/people participating in events. Exclude product names, tools, platforms, locations, organizations, and other non-character entities.',
