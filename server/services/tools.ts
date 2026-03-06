@@ -1306,21 +1306,6 @@ function mergeStylePayload(input: {
   return next;
 }
 
-function hasLargeRewriteIntent(request: string) {
-  const normalized = request.toLowerCase();
-  return [
-    /\boverhaul\b/,
-    /\brework\b/,
-    /\brewrite\b/,
-    /\bretone\b/,
-    /\bmajor\s+shift\b/,
-    /\bdramatic\s+change\b/,
-    /\bfrom\s+scratch\b/,
-    /\breimagine\b/,
-    /\breset\s+the\s+style\b/,
-  ].some((pattern) => pattern.test(normalized));
-}
-
 function inferStylePatchFromRequest(request: string) {
   const normalized = request.trim();
   const lower = normalized.toLowerCase();
@@ -1351,19 +1336,107 @@ function inferStylePatchFromRequest(request: string) {
   };
 }
 
+function isStyleTextUnderSpecified(value: string, request: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return true;
+  }
+
+  if (normalized.toLowerCase() === request.trim().toLowerCase()) {
+    return true;
+  }
+
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  return wordCount < 10;
+}
+
+function buildExpandedStylePatchFromRequest(input: {
+  current: ProjectStylePayload;
+  request: string;
+  candidate: Partial<ProjectStylePayload>;
+}) {
+  const request = input.request.trim();
+  const requestSentence = request.endsWith('.') ? request : `${request}.`;
+
+  const writingSeed =
+    input.current.writingStyle ||
+    'Clear prose with vivid but disciplined sensory detail.';
+  const characterSeed =
+    input.current.characterStyle ||
+    'Distinct voices with stable motivations and behavior continuity.';
+  const artSeed =
+    input.current.artStyle ||
+    'Cinematic visual language with coherent palette and lighting intent.';
+  const pacingSeed =
+    input.current.storytellingPacing ||
+    'Balanced pace: efficient setup, escalation through turning points, decisive payoff.';
+
+  const writingStyle =
+    typeof input.candidate.writingStyle === 'string' &&
+    !isStyleTextUnderSpecified(input.candidate.writingStyle, request)
+      ? input.candidate.writingStyle.trim()
+      : `${requestSentence} Keep prose direction anchored to: ${writingSeed} Prioritize voice consistency, purposeful diction, and scene-level readability with concise transitions.`;
+
+  const characterStyle =
+    typeof input.candidate.characterStyle === 'string' &&
+    !isStyleTextUnderSpecified(input.candidate.characterStyle, request)
+      ? input.candidate.characterStyle.trim()
+      : `${requestSentence} Keep character direction anchored to: ${characterSeed} Ensure each lead has a distinct speech pattern, explicit motivation, and behavior rules that remain consistent across scenes.`;
+
+  const artStyle =
+    typeof input.candidate.artStyle === 'string' &&
+    !isStyleTextUnderSpecified(input.candidate.artStyle, request)
+      ? input.candidate.artStyle.trim()
+      : `${requestSentence} Keep art direction anchored to: ${artSeed} Define framing language, lens distance tendencies, color-temperature progression, and lighting contrast that matches emotional beats.`;
+
+  const storytellingPacing =
+    typeof input.candidate.storytellingPacing === 'string' &&
+    !isStyleTextUnderSpecified(input.candidate.storytellingPacing, request)
+      ? input.candidate.storytellingPacing.trim()
+      : `${requestSentence} Keep pacing direction anchored to: ${pacingSeed} Structure each sequence with clear setup, progressive pressure, controlled reveals, and a payoff cadence that avoids rushed resolution.`;
+
+  const extras = {
+    ...input.current.extras,
+    ...(input.candidate.extras
+      ? normalizeStyleExtras(input.candidate.extras)
+      : {}),
+    LatestDirection: request,
+    ProjectScope:
+      'Apply style decisions project-wide across story prose, character portrayal, visual language, and sequence pacing.',
+  };
+
+  return {
+    writingStyle,
+    characterStyle,
+    artStyle,
+    storytellingPacing,
+    extras,
+  } satisfies ProjectStylePayload;
+}
+
 async function deriveStylePayloadWithSubAgent(input: {
   current: ProjectStylePayload;
   request: string;
 }) {
   const prompt = [
-    'You are a style refinement sub-agent for story pre-production.',
+    'You are a senior creative direction board for story pre-production.',
+    'Operate as a professional: literary director, character director, art director/cinematographer, and narrative pacing editor.',
     'Task: update the project style profile from user request.',
+    'Goal: produce detailed, production-ready guidance for the entire project scope while adapting to existing style information.',
     'Return strict JSON only with fields:',
     '{"writingStyle":"...","characterStyle":"...","artStyle":"...","storytellingPacing":"...","extras":{"key":"value"}}',
     'Rules:',
-    '1) Keep concise but specific creative direction.',
-    '2) Preserve useful existing intent unless request explicitly replaces it.',
-    '3) Do not output markdown fences.',
+    '1) Always adapt to and preserve strong existing direction unless user explicitly replaces it.',
+    '2) Expand terse requests into concrete direction. Avoid generic one-liners.',
+    '3) Each core field should be specific and actionable (target roughly 2-4 sentences each).',
+    '4) Determine project-level scope and fit: genre posture, audience experience, tone boundaries, and continuity constraints.',
+    '5) Keep writingStyle focused on prose voice, diction, texture, and narration policy.',
+    '6) Keep characterStyle focused on voice differentiation, motivation clarity, and behavioral consistency rules.',
+    '7) Keep artStyle focused on visual language, composition/lens logic, color script, lighting, and texture references.',
+    '8) Keep storytellingPacing focused on scene rhythm, escalation profile, reveal timing, and payoff cadence.',
+    '9) Use extras for cross-cutting dimensions only (for example: ProjectScope, GenrePositioning, AudienceExperience, NegativeGuardrails, ContinuityRules).',
+    '10) If request is broad (e.g. "create a fitting style"), fill all four core fields comprehensively instead of returning only extras.',
+    '11) Do not output markdown fences.',
     '',
     `Current writingStyle: ${input.current.writingStyle || '(empty)'}`,
     `Current characterStyle: ${input.current.characterStyle || '(empty)'}`,
@@ -2330,6 +2403,16 @@ export async function upsertProjectStyleNodeTool(context: ToolContext) {
     },
   });
 
+  emitRuntimeEvent(context, {
+    type: 'agent.style.updated',
+    payload: {
+      projectId: context.projectId,
+      sourceTool: 'upsert_project_style_node',
+      styleNode: updated,
+      styleProfile: next,
+    },
+  });
+
   return {
     ok: true,
     message: 'Project style node updated.',
@@ -2355,7 +2438,7 @@ export async function refineProjectStyleNodeTool(context: ToolContext) {
   }
 
   const payload = parsed.data;
-  const delegateToSubAgent = hasLargeRewriteIntent(payload.request);
+  const delegateToSubAgent = true;
 
   let mode: StyleRefineMode = 'direct';
   let basePatch = inferStylePatchFromRequest(payload.request);
@@ -2373,6 +2456,14 @@ export async function refineProjectStyleNodeTool(context: ToolContext) {
     } catch {
       // Fall back to deterministic direct patch if sub-agent generation fails.
     }
+  }
+
+  if (payload.request.trim()) {
+    basePatch = buildExpandedStylePatchFromRequest({
+      current: canonical.style,
+      request: payload.request,
+      candidate: basePatch,
+    });
   }
 
   const directPatch: Partial<ProjectStylePayload> = {
@@ -2411,6 +2502,17 @@ export async function refineProjectStyleNodeTool(context: ToolContext) {
       artStyle: next.artStyle,
       storytellingPacing: next.storytellingPacing,
       extrasJson: JSON.stringify(next.extras),
+    },
+  });
+
+  emitRuntimeEvent(context, {
+    type: 'agent.style.updated',
+    payload: {
+      projectId: context.projectId,
+      sourceTool: 'refine_project_style_node',
+      styleNode: updated,
+      styleProfile: next,
+      updateMode: mode,
     },
   });
 

@@ -44,6 +44,31 @@ function getGoogleGenAIOptions(): GoogleGenAIOptions {
 
 const ai = new GoogleGenAI(getGoogleGenAIOptions());
 
+// Async function-calling: keep conversation/audio flowing while heavier tools run.
+const NON_BLOCKING_TOOL_NAMES = new Set([
+  'generate_character_brief',
+  'generate_character_design',
+  'generate_character_inspiration',
+  'upsert_project_style_node',
+  'refine_project_style_node',
+  'generate_storyboard',
+]);
+
+function applyAsyncFunctionCallingBehavior(
+  declarations: ReturnType<typeof getActiveAgentToolDeclarations>,
+) {
+  return declarations.map((declaration) => {
+    if (!declaration.name || !NON_BLOCKING_TOOL_NAMES.has(declaration.name)) {
+      return declaration;
+    }
+
+    return {
+      ...declaration,
+      behavior: 'NON_BLOCKING',
+    } as typeof declaration;
+  });
+}
+
 type BridgeContext = {
   ws: WSContext<WebSocket>;
   userId: string;
@@ -55,9 +80,11 @@ type BridgeContext = {
 
 export async function connectGeminiLiveBridge(context: BridgeContext) {
   let session: Session | null = null;
-  const toolDeclarations = getActiveAgentToolDeclarations({
-    projectId: context.projectId,
-  });
+  const toolDeclarations = applyAsyncFunctionCallingBehavior(
+    getActiveAgentToolDeclarations({
+      projectId: context.projectId,
+    }),
+  );
 
   session = await ai.live.connect({
     model: env.GEMINI_LIVE_MODEL,
@@ -318,6 +345,7 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
                 name: toolName,
                 response: {
                   output: result,
+                  scheduling: isDeferred ? 'SILENT' : 'WHEN_IDLE',
                 },
               } satisfies FunctionResponse;
             }),

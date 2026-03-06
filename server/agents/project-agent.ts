@@ -351,8 +351,8 @@ export const ProjectAgent: AgentDefinition = {
     'generate_character_design requires existing character nodes. If there are none, clearly tell the user to create/import character nodes first.',
     'Style direction is project context. Resolve canonical style state with get_project_style_node before major rewrite/retouch guidance.',
     'When the user asks to create/update/adjust style guidance, always execute a mutating style tool (upsert_project_style_node or refine_project_style_node) before responding.',
-    'For small explicit style edits, call upsert_project_style_node directly.',
-    'For large rewrite-intent style requests (overhaul/rework/rewrite/retone/major shift), call refine_project_style_node so sub-agent refinement can run when appropriate.',
+    'For direct field-level edits (for example: only set writingStyle/artStyle text exactly), call upsert_project_style_node.',
+    'For natural-language style generation or refinement requests, call refine_project_style_node so professional multi-discipline style synthesis runs across the whole project scope.',
     'After style updates, summarize what changed in writingStyle, characterStyle, artStyle, and storytellingPacing.',
   ],
   capabilities: [

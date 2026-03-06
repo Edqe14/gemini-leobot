@@ -1874,6 +1874,109 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           return;
         }
 
+        if (message.type === 'agent.style.updated') {
+          const payload =
+            message.payload && typeof message.payload === 'object'
+              ? (message.payload as Record<string, unknown>)
+              : null;
+          const updatedProjectId =
+            payload && typeof payload.projectId === 'string'
+              ? payload.projectId.trim()
+              : '';
+
+          if (
+            updatedProjectId &&
+            updatedProjectId !== activeProjectIdRef.current.trim()
+          ) {
+            return;
+          }
+
+          const styleNodeRaw =
+            payload && typeof payload.styleNode === 'object'
+              ? (payload.styleNode as Record<string, unknown>)
+              : null;
+          const styleNodeId =
+            styleNodeRaw && typeof styleNodeRaw.id === 'string'
+              ? styleNodeRaw.id
+              : '';
+
+          if (!styleNodeRaw || !styleNodeId) {
+            return;
+          }
+
+          const updatedStyleNode: StyleNodeRecord = {
+            id: styleNodeId,
+            name:
+              typeof styleNodeRaw.name === 'string'
+                ? styleNodeRaw.name
+                : 'Project Style Guide',
+            description:
+              typeof styleNodeRaw.description === 'string'
+                ? styleNodeRaw.description
+                : '',
+            writingStyle:
+              typeof styleNodeRaw.writingStyle === 'string'
+                ? styleNodeRaw.writingStyle
+                : null,
+            characterStyle:
+              typeof styleNodeRaw.characterStyle === 'string'
+                ? styleNodeRaw.characterStyle
+                : null,
+            artStyle:
+              typeof styleNodeRaw.artStyle === 'string'
+                ? styleNodeRaw.artStyle
+                : null,
+            storytellingPacing:
+              typeof styleNodeRaw.storytellingPacing === 'string'
+                ? styleNodeRaw.storytellingPacing
+                : null,
+            extrasJson:
+              typeof styleNodeRaw.extrasJson === 'string'
+                ? styleNodeRaw.extrasJson
+                : null,
+            positionX:
+              typeof styleNodeRaw.positionX === 'number'
+                ? styleNodeRaw.positionX
+                : null,
+            positionY:
+              typeof styleNodeRaw.positionY === 'number'
+                ? styleNodeRaw.positionY
+                : null,
+          };
+
+          setProjectGraph((current) => {
+            if (!current) {
+              return current;
+            }
+
+            const existing = current.styleNodes ?? [];
+            const hasNode = existing.some((node) => node.id === styleNodeId);
+            const nextStyleNodes = hasNode
+              ? existing.map((node) =>
+                  node.id === styleNodeId
+                    ? { ...node, ...updatedStyleNode }
+                    : node,
+                )
+              : [...existing, updatedStyleNode];
+
+            return {
+              ...current,
+              styleNodes: nextStyleNodes,
+            };
+          });
+
+          setStyleDrafts((current) => ({
+            ...current,
+            [styleNodeId]: {
+              ...buildStyleDraftFromRecord(updatedStyleNode),
+              saveState: 'saved',
+              saveMessage: 'Saved',
+            },
+          }));
+
+          return;
+        }
+
         if (message.type === 'agent.status') {
           const payload =
             message.payload && typeof message.payload === 'object'
