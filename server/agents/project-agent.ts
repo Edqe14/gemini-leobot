@@ -1,11 +1,12 @@
 import { Type } from '@google/genai';
 import type { AgentDefinition } from './types';
 import {
+  createStoryNodeTool,
   generateCharacterBriefTool,
   generateCharacterInspirationTool,
   generateStoryboardTool,
-  importStoryMarkdownTool,
   listProjectsTool,
+  syncStoryNodeTool,
 } from '../services/tools';
 
 export const ProjectAgent: AgentDefinition = {
@@ -20,25 +21,55 @@ export const ProjectAgent: AgentDefinition = {
       handler: listProjectsTool,
     },
     {
-      name: 'import_story_markdown',
+      name: 'create_story_node',
       description:
-        'Import or sync story markdown content into the active project. Use when user asks to import story text or Google Docs content.',
+        'Create (or ensure) a story node in the active project so the user can paste markdown or use Google Docs import from the UI.',
       parameters: {
         type: Type.OBJECT,
         properties: {
-          markdown: {
+          defaultTabType: {
             type: Type.STRING,
             description:
-              'Optional markdown content to import. If omitted, backend may use project import flow details.',
+              'Optional preferred tab for UI input. Use "markdown" for paste flow or "google_docs" for link flow.',
           },
-          sourceUrl: {
+          title: {
+            type: Type.STRING,
+            description: 'Optional initial story title when creating the node.',
+          },
+          storyNodeId: {
             type: Type.STRING,
             description:
-              'Optional Google Docs or source URL that contains the story markdown.',
+              'Optional existing story node ID to verify before updating.',
           },
         },
       },
-      handler: importStoryMarkdownTool,
+      handler: createStoryNodeTool,
+    },
+    {
+      name: 'sync_story_node',
+      description:
+        'Resolve related project nodes, verify if a requested story node ID exists, and then create or update the active story using a concrete resolved node ID.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          storyNodeId: {
+            type: Type.STRING,
+            description:
+              'Optional story node ID to verify. If missing/deleted, the tool returns the resolved active story node ID.',
+          },
+          defaultTabType: {
+            type: Type.STRING,
+            description:
+              'Optional preferred tab for UI input. Use "markdown" or "google_docs".',
+          },
+          title: {
+            type: Type.STRING,
+            description:
+              'Optional story title to apply when syncing the story node.',
+          },
+        },
+      },
+      handler: syncStoryNodeTool,
     },
     {
       name: 'generate_character_brief',
@@ -104,9 +135,11 @@ export const ProjectAgent: AgentDefinition = {
   ],
   toolInstructions: [
     'For factual project/account data (for example: what projects exist, project names, counts, recency, story status), call the list_projects tool before answering.',
+    'Before claiming a story node was updated (especially for markdown/google docs story workflows), call sync_story_node first and use the returned sync.resolvedStoryNodeId in your response.',
+    'If sync_story_node reports requestedNodeMissing=true, clearly tell the user the previous node ID no longer exists and provide the resolvedStoryNodeId.',
   ],
   capabilities: [
-    '1. Import a story from markdown/Google Docs into this project.',
+    '1. Create story nodes and prepare project story workspace.',
     '2. Generate character brief nodes from story context.',
     '3. Generate character design/style inspiration nodes.',
     '4. Generate storyboard draft nodes and shot outlines.',

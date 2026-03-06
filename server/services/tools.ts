@@ -6,6 +6,200 @@ type ToolContext = {
   args: Record<string, unknown>;
 };
 
+type StoryNodeSyncInput = {
+  defaultTitle?: string;
+  defaultTabType?: 'markdown' | 'google_docs';
+  requestedStoryNodeId?: string;
+};
+
+async function verifyProjectAccess(context: ToolContext) {
+  if (!context.projectId) {
+    return {
+      ok: false as const,
+      message:
+        'This tool requires an active project. Set project context first.',
+    };
+  }
+
+  const project = await prisma.project.findFirst({
+    where: {
+      id: context.projectId,
+      userId: context.userId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!project) {
+    return {
+      ok: false as const,
+      message: 'Active project was not found for this user.',
+    };
+  }
+
+  return {
+    ok: true as const,
+  };
+}
+
+function normalizeDefaultTabType(raw: unknown): 'markdown' | 'google_docs' {
+  const normalized = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return normalized === 'google_docs' ? 'google_docs' : 'markdown';
+}
+
+function normalizeOptionalTrimmedString(raw: unknown) {
+  if (typeof raw !== 'string') {
+    return '';
+  }
+
+  return raw.trim();
+}
+
+async function syncStoryNodeState(
+  context: ToolContext,
+  input: StoryNodeSyncInput,
+) {
+  if (!context.projectId) {
+    return {
+      ok: false,
+      message: 'No active project is set for story sync.',
+    };
+  }
+
+  const defaultTitle = input.defaultTitle?.trim() || 'Untitled Story';
+
+  const projectGraph = await prisma.project.findFirst({
+    where: {
+      id: context.projectId,
+      userId: context.userId,
+    },
+    select: {
+      id: true,
+      story: {
+        select: {
+          id: true,
+          title: true,
+          markdown: true,
+          sourceDocUrl: true,
+          updatedAt: true,
+        },
+      },
+      characterNodes: {
+        select: {
+          id: true,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      },
+      styleNodes: {
+        select: {
+          id: true,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      },
+      storyboardNodes: {
+        select: {
+          id: true,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      },
+    },
+  });
+
+  if (!projectGraph) {
+    return {
+      ok: false,
+      message: 'Active project was not found for this user.',
+    };
+  }
+
+  const requestedStoryNodeId = input.requestedStoryNodeId?.trim() || null;
+  const existingStory = projectGraph.story;
+  const existingStoryNodeId = existingStory?.id ?? null;
+  const requestedNodeExists = Boolean(
+    requestedStoryNodeId && requestedStoryNodeId === existingStoryNodeId,
+  );
+
+  let nextStory = existingStory;
+  let syncAction: 'created' | 'updated' = 'updated';
+
+  if (!existingStory) {
+    syncAction = 'created';
+    nextStory = await prisma.story.create({
+      data: {
+        projectId: context.projectId,
+        title: defaultTitle,
+        markdown: '',
+        sourceDocUrl: null,
+        backgroundPrompt: null,
+      },
+      select: {
+        id: true,
+        title: true,
+        markdown: true,
+        sourceDocUrl: true,
+        updatedAt: true,
+      },
+    });
+  } else {
+    const nextTitle = defaultTitle || existingStory.title;
+    nextStory = await prisma.story.update({
+      where: {
+        id: existingStory.id,
+      },
+      data: {
+        title: nextTitle,
+      },
+      select: {
+        id: true,
+        title: true,
+        markdown: true,
+        sourceDocUrl: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  const resolvedStoryNodeId = nextStory.id;
+  const requestedNodeMissing = Boolean(
+    requestedStoryNodeId && requestedStoryNodeId !== resolvedStoryNodeId,
+  );
+
+  const message = requestedNodeMissing
+    ? 'Requested story node ID was not found. Synced with the active story node ID instead.'
+    : syncAction === 'created'
+      ? 'Story node did not exist and has been created.'
+      : 'Story node exists and has been updated.';
+
+  return {
+    ok: true,
+    message,
+    story: nextStory,
+    sync: {
+      action: syncAction,
+      requestedStoryNodeId,
+      requestedNodeExists,
+      resolvedStoryNodeId,
+      requestedNodeMissing,
+    },
+    relatedNodes: {
+      storyNodeId: resolvedStoryNodeId,
+      characterNodeIds: projectGraph.characterNodes.map((node) => node.id),
+      styleNodeIds: projectGraph.styleNodes.map((node) => node.id),
+      storyboardNodeIds: projectGraph.storyboardNodes.map((node) => node.id),
+    },
+    ui: {
+      defaultTabType: input.defaultTabType ?? 'markdown',
+    },
+  };
+}
+
 export async function createProjectTool(context: ToolContext) {
   const rawName = context.args.name;
   const name = typeof rawName === 'string' ? rawName.trim() : '';
@@ -91,12 +285,62 @@ export async function setActiveProjectTool(context: ToolContext) {
   };
 }
 
-export async function importStoryMarkdownTool(context: ToolContext) {
+export async function createStoryNodeTool(context: ToolContext) {
+  const projectAccess = await verifyProjectAccess(context);
+  if (!projectAccess.ok) {
+    return projectAccess;
+  }
+
+  const defaultTabType = normalizeDefaultTabType(context.args.defaultTabType);
+  const title = normalizeOptionalTrimmedString(context.args.title);
+
+  const result = await syncStoryNodeState(context, {
+    defaultTitle: title || 'Untitled Story',
+    defaultTabType,
+    requestedStoryNodeId: normalizeOptionalTrimmedString(
+      context.args.storyNodeId,
+    ),
+  });
+
+  if (!result.ok || !('sync' in result)) {
+    return result;
+  }
+
   return {
-    ok: true,
+    ...result,
     message:
-      'Use /api/projects/:id/story/import to import markdown from Google Docs.',
-    received: context.args,
+      result.sync?.action === 'created'
+        ? 'Story node is ready. It was missing and has been created for this project.'
+        : 'Story node is ready in this project. Use the returned story.id for any follow-up updates.',
+  };
+}
+
+export async function syncStoryNodeTool(context: ToolContext) {
+  const projectAccess = await verifyProjectAccess(context);
+  if (!projectAccess.ok) {
+    return projectAccess;
+  }
+
+  const defaultTabType = normalizeDefaultTabType(context.args.defaultTabType);
+  const title = normalizeOptionalTrimmedString(context.args.title);
+  const requestedStoryNodeId = normalizeOptionalTrimmedString(
+    context.args.storyNodeId,
+  );
+
+  const result = await syncStoryNodeState(context, {
+    defaultTitle: title || 'Untitled Story',
+    defaultTabType,
+    requestedStoryNodeId,
+  });
+
+  if (!result.ok || !('sync' in result)) {
+    return result;
+  }
+
+  return {
+    ...result,
+    message:
+      'Related nodes were resolved and story node sync completed. Use sync.resolvedStoryNodeId for reliable follow-up operations.',
   };
 }
 

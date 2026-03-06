@@ -1,20 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Background,
   Controls,
   MiniMap,
+  type NodeChange,
+  type Node,
+  type NodeProps,
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
 } from '@xyflow/react';
 import { Captions, CaptionsOff, Mic, MicOff, User } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AuthGate } from '@/components/auth-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { initialEdges, initialNodes } from '@/features/flow/nodes';
+import {
+  initialEdges,
+  initialNodes,
+  type CreativeNodeData,
+} from '@/features/flow/nodes';
 import { createAgentSocket } from '@/lib/ws-client';
 
 import '@xyflow/react/dist/style.css';
@@ -39,6 +46,68 @@ type CaptionLine = {
   text: string;
 };
 
+type StoryRecord = {
+  id: string;
+  title: string;
+  markdown: string;
+  sourceDocUrl?: string | null;
+};
+
+type CharacterNodeRecord = {
+  id: string;
+  name: string;
+  briefMarkdown: string;
+};
+
+type StyleNodeRecord = {
+  id: string;
+  name: string;
+  description: string;
+};
+
+type StoryboardNodeRecord = {
+  id: string;
+  title: string;
+};
+
+type ProjectGraphRecord = {
+  id: string;
+  name?: string;
+  story?: StoryRecord | null;
+  characterNodes?: CharacterNodeRecord[];
+  styleNodes?: StyleNodeRecord[];
+  storyboardNodes?: StoryboardNodeRecord[];
+};
+
+type ProjectDetailsResponse = {
+  project?: ProjectGraphRecord;
+};
+
+type StoryImportResponse = {
+  story?: StoryRecord;
+  error?: string;
+};
+
+type StoryImportMode = 'markdown' | 'google_docs';
+
+type StoryImportNodeData = {
+  activeProjectId: string;
+  mode: StoryImportMode;
+  markdownInput: string;
+  googleDocUrl: string;
+  busy: boolean;
+  status: string;
+  error: string;
+  onModeChange: (mode: StoryImportMode) => void;
+  onMarkdownChange: (value: string) => void;
+  onGoogleDocUrlChange: (value: string) => void;
+  onSave: () => void;
+  onFetchGoogleDocs: () => void;
+};
+
+type CanvasNodeData = CreativeNodeData | StoryImportNodeData;
+type StoryImportCanvasNode = Node<StoryImportNodeData, 'storyImport'>;
+
 type PendingContextSwitch = {
   projectId: string;
   projectName?: string;
@@ -53,6 +122,95 @@ const CONTEXT_SWITCH_RETRY_MS = 320;
 const CONTEXT_SWITCH_TIMEOUT_MS = 8000;
 const CONTEXT_SWITCH_HARD_TIMEOUT_MS = 12000;
 const CONTEXT_SWITCH_SIGNAL_EXTENSION_MS = 4000;
+
+function getProjectIdFromSearch(search: string) {
+  const projectId = new URLSearchParams(search).get('projectId');
+  return projectId?.trim() || '';
+}
+
+function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
+  const nodeData = data;
+
+  return (
+    <Card className='w-200 border border-border/80 bg-card/95 p-4 shadow-sm backdrop-blur'>
+      <div className='mb-3 flex items-center justify-between gap-3'>
+        <p className='text-sm font-semibold'>Import Story</p>
+        <Badge variant='outline'>
+          project {nodeData.activeProjectId ? 'ready' : 'unset'}
+        </Badge>
+      </div>
+
+      <div className='mb-3 flex items-center gap-2'>
+        <Button
+          type='button'
+          variant='outline'
+          className={`nodrag h-8 min-w-28 px-3 text-xs ${
+            nodeData.mode === 'markdown'
+              ? 'border-border bg-secondary text-foreground'
+              : 'border-border bg-background text-muted-foreground'
+          }`}
+          onClick={() => nodeData.onModeChange('markdown')}>
+          Markdown
+        </Button>
+        <Button
+          type='button'
+          variant='outline'
+          className={`nodrag h-8 min-w-28 px-3 text-xs ${
+            nodeData.mode === 'google_docs'
+              ? 'border-border bg-secondary text-foreground'
+              : 'border-border bg-background text-muted-foreground'
+          }`}
+          onClick={() => nodeData.onModeChange('google_docs')}>
+          Google Docs
+        </Button>
+      </div>
+
+      {nodeData.mode === 'markdown' ? (
+        <div className='space-y-3'>
+          <textarea
+            value={nodeData.markdownInput}
+            onChange={(event) => nodeData.onMarkdownChange(event.target.value)}
+            placeholder='Paste your markdown story here...'
+            className='nodrag nowheel nopan h-64 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm'
+          />
+          <Button
+            type='button'
+            className='nodrag w-full bg-primary/90 text-primary-foreground hover:bg-primary'
+            disabled={nodeData.busy || !nodeData.activeProjectId.trim()}
+            onClick={nodeData.onSave}>
+            {nodeData.busy ? 'Saving...' : 'Save Story'}
+          </Button>
+        </div>
+      ) : (
+        <div className='space-y-3'>
+          <input
+            type='url'
+            value={nodeData.googleDocUrl}
+            onChange={(event) =>
+              nodeData.onGoogleDocUrlChange(event.target.value)
+            }
+            placeholder='https://docs.google.com/document/d/...'
+            className='nodrag nowheel nopan h-10 w-full rounded-md border border-input bg-background px-3 text-sm'
+          />
+          <Button
+            type='button'
+            className='nodrag w-full bg-primary/90 text-primary-foreground hover:bg-primary'
+            disabled={nodeData.busy || !nodeData.activeProjectId.trim()}
+            onClick={nodeData.onFetchGoogleDocs}>
+            {nodeData.busy ? 'Fetching...' : 'Fetch From Google Docs'}
+          </Button>
+        </div>
+      )}
+
+      {nodeData.status ? (
+        <p className='mt-2 text-xs text-muted-foreground'>{nodeData.status}</p>
+      ) : null}
+      {nodeData.error ? (
+        <p className='mt-2 text-xs text-destructive'>{nodeData.error}</p>
+      ) : null}
+    </Card>
+  );
+}
 
 function mergeCaptionText(previous: string, incoming: string): string {
   const prev = previous.trim();
@@ -98,6 +256,7 @@ function updateCaptionLines(
     next.push({ speaker, text: trimmed });
     return next.slice(-12);
   }
+
   const merged = mergeCaptionText(last.text, trimmed);
   if (merged === last.text) {
     return next;
@@ -139,6 +298,9 @@ function extractAudioChunks(payload: unknown): AudioChunk[] {
   walk(payload);
   return chunks;
 }
+
+const StoryImportNode = memo(StoryImportNodeComponent);
+const FLOW_NODE_TYPES = { storyImport: StoryImportNode };
 
 function extractOutputTranscription(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') {
@@ -287,7 +449,10 @@ export function CanvasPage() {
 
 function CreativeAgentCanvas({ userName }: { userName: string }) {
   const navigate = useNavigate();
-  const [nodes, , onNodesChange] = useNodesState(initialNodes);
+  const location = useLocation();
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<CanvasNodeData>>(
+    initialNodes as Node<CanvasNodeData>[],
+  );
   const [edges, , onEdgesChange] = useEdgesState(initialEdges);
   const [micActive, setMicActive] = useState(false);
   const [micError, setMicError] = useState('');
@@ -303,8 +468,24 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [ccEnabled, setCcEnabled] = useState(true);
   const [captionLines, setCaptionLines] = useState<CaptionLine[]>([]);
   const [showInterruptedBadge, setShowInterruptedBadge] = useState(false);
+  const [activeProjectId, setActiveProjectId] = useState(() =>
+    getProjectIdFromSearch(window.location.search),
+  );
   const [projectName, setProjectName] = useState<string>('No active project');
+  const [storyImportMode, setStoryImportMode] =
+    useState<StoryImportMode>('markdown');
+  const [storyMarkdownInput, setStoryMarkdownInput] = useState('');
+  const [storyGoogleDocUrl, setStoryGoogleDocUrl] = useState('');
+  const [storyImportBusy, setStoryImportBusy] = useState(false);
+  const [storyImportStatus, setStoryImportStatus] = useState('');
+  const [storyImportError, setStoryImportError] = useState('');
+  const [projectGraph, setProjectGraph] = useState<ProjectGraphRecord | null>(
+    null,
+  );
+  const [projectGraphRefreshToken, setProjectGraphRefreshToken] = useState(0);
   const [debugTextInput, setDebugTextInput] = useState('');
+  const initialProjectIdRef = useRef(activeProjectId);
+  const activeProjectIdRef = useRef(activeProjectId);
   const socketClientRef = useRef<ReturnType<typeof createAgentSocket> | null>(
     null,
   );
@@ -463,7 +644,42 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   }, [captionLines]);
 
   useEffect(() => {
+    activeProjectIdRef.current = activeProjectId;
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    const projectIdFromUrl = getProjectIdFromSearch(location.search);
+    setActiveProjectId(projectIdFromUrl);
+  }, [location.search]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const currentUrlProjectId = params.get('projectId')?.trim() || '';
+    const targetProjectId = activeProjectId.trim();
+
+    if (currentUrlProjectId === targetProjectId) {
+      return;
+    }
+
+    if (targetProjectId) {
+      params.set('projectId', targetProjectId);
+    } else {
+      params.delete('projectId');
+    }
+
+    const nextSearch = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : '',
+      },
+      { replace: true },
+    );
+  }, [activeProjectId, location.pathname, location.search, navigate]);
+
+  useEffect(() => {
     const client = createAgentSocket({
+      projectId: initialProjectIdRef.current || undefined,
       onOpen: () => {
         setConnected(true);
         setSocketStatus('voice socket connected');
@@ -517,6 +733,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
           if (requestedProjectId) {
             const pendingName = requestedProjectName?.trim();
+            setActiveProjectId(requestedProjectId);
             setProjectName(pendingName || 'Active project');
 
             pendingContextSwitchRef.current = {
@@ -543,7 +760,32 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             payload && typeof payload.projectName === 'string'
               ? payload.projectName.trim()
               : '';
+          const activeProjectIdFromMessage =
+            payload && typeof payload.projectId === 'string'
+              ? payload.projectId.trim()
+              : '';
+          setActiveProjectId(activeProjectIdFromMessage);
           setProjectName(activeName || 'Active project');
+          return;
+        }
+
+        if (message.type === 'agent.project.changed') {
+          const payload =
+            message.payload && typeof message.payload === 'object'
+              ? (message.payload as Record<string, unknown>)
+              : null;
+          const changedProjectId =
+            payload && typeof payload.projectId === 'string'
+              ? payload.projectId.trim()
+              : '';
+
+          if (
+            !changedProjectId ||
+            changedProjectId === activeProjectIdRef.current.trim()
+          ) {
+            setProjectGraphRefreshToken((value) => value + 1);
+          }
+
           return;
         }
 
@@ -968,6 +1210,304 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   }, [connected, debugTextInput]);
 
   useEffect(() => {
+    const projectId = activeProjectId.trim();
+    if (!projectId) {
+      setProjectName('No active project');
+      setProjectGraph(null);
+      setNodes([]);
+      setStoryMarkdownInput('');
+      setStoryGoogleDocUrl('');
+      setStoryImportStatus('');
+      setStoryImportError('');
+      return;
+    }
+
+    let cancelled = false;
+
+    void fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+      credentials: 'include',
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error('Failed to load active project story state.');
+        }
+
+        return (await response.json()) as ProjectDetailsResponse;
+      })
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+
+        const project = payload.project ?? null;
+        setProjectGraph(project);
+        setProjectName(project?.name?.trim() || 'Active project');
+
+        const existingStory = project?.story;
+        setStoryMarkdownInput(existingStory?.markdown ?? '');
+        setStoryGoogleDocUrl(existingStory?.sourceDocUrl ?? '');
+        setStoryImportStatus('');
+        setStoryImportError('');
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        setProjectGraph(null);
+        setNodes([]);
+        setProjectName('No active project');
+        setStoryImportError(
+          error instanceof Error
+            ? error.message
+            : 'Failed to load active project story state.',
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, projectGraphRefreshToken, setNodes]);
+
+  const importStoryForActiveProject = useCallback(
+    async (mode: StoryImportMode) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) {
+        setStoryImportError('Select an active project before importing story.');
+        return;
+      }
+
+      const markdown = storyMarkdownInput.trim();
+      const sourceUrl = storyGoogleDocUrl.trim();
+
+      if (mode === 'markdown' && !markdown) {
+        setStoryImportError('Paste markdown content before saving.');
+        return;
+      }
+
+      if (mode === 'google_docs' && !sourceUrl) {
+        setStoryImportError('Paste a Google Docs URL before fetching story.');
+        return;
+      }
+
+      setStoryImportBusy(true);
+      setStoryImportStatus('');
+      setStoryImportError('');
+
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/story/import`,
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(
+              mode === 'google_docs'
+                ? { sourceUrl }
+                : {
+                    markdown,
+                  },
+            ),
+          },
+        );
+
+        const payload = (await response.json()) as StoryImportResponse;
+        if (!response.ok) {
+          throw new Error(payload.error || 'Story import failed.');
+        }
+
+        const story = payload.story;
+        if (story) {
+          setStoryMarkdownInput(story.markdown ?? markdown);
+          setStoryGoogleDocUrl(story.sourceDocUrl ?? sourceUrl);
+        }
+
+        setStoryImportStatus(
+          mode === 'google_docs'
+            ? 'Story fetched from Google Docs and saved.'
+            : 'Story markdown saved.',
+        );
+      } catch (error) {
+        setStoryImportError(
+          error instanceof Error ? error.message : 'Story import failed.',
+        );
+      } finally {
+        setStoryImportBusy(false);
+      }
+    },
+    [activeProjectId, storyGoogleDocUrl, storyMarkdownInput],
+  );
+
+  const deleteNodeFromDatabase = useCallback(
+    async (nodeId: string) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) {
+        return;
+      }
+
+      let endpoint = '';
+      if (nodeId.startsWith('story-')) {
+        endpoint = `/api/projects/${encodeURIComponent(projectId)}/story`;
+      } else if (nodeId.startsWith('character-')) {
+        endpoint = `/api/projects/${encodeURIComponent(projectId)}/character-nodes/${encodeURIComponent(
+          nodeId.replace('character-', ''),
+        )}`;
+      } else if (nodeId.startsWith('style-')) {
+        endpoint = `/api/projects/${encodeURIComponent(projectId)}/style-nodes/${encodeURIComponent(
+          nodeId.replace('style-', ''),
+        )}`;
+      } else if (nodeId.startsWith('storyboard-')) {
+        endpoint = `/api/projects/${encodeURIComponent(projectId)}/storyboard-nodes/${encodeURIComponent(
+          nodeId.replace('storyboard-', ''),
+        )}`;
+      } else {
+        return;
+      }
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to delete node from project database.');
+        }
+
+        setProjectGraphRefreshToken((value) => value + 1);
+      } catch (error) {
+        setSocketStatus(
+          error instanceof Error
+            ? error.message
+            : 'Failed to delete node from project database.',
+        );
+        setProjectGraphRefreshToken((value) => value + 1);
+      }
+    },
+    [activeProjectId],
+  );
+
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<Node<CanvasNodeData>>[]) => {
+      onNodesChange(changes);
+
+      const removedNodeIds = changes
+        .filter((change) => change.type === 'remove')
+        .map((change) => change.id);
+
+      removedNodeIds.forEach((id) => {
+        void deleteNodeFromDatabase(id);
+      });
+    },
+    [deleteNodeFromDatabase, onNodesChange],
+  );
+
+  useEffect(() => {
+    if (!activeProjectId.trim() || !projectGraph) {
+      setNodes([]);
+      return;
+    }
+
+    const nextNodes: Node<CanvasNodeData>[] = [];
+
+    if (projectGraph.story) {
+      const nodeData: StoryImportNodeData = {
+        activeProjectId,
+        mode: storyImportMode,
+        markdownInput: storyMarkdownInput,
+        googleDocUrl: storyGoogleDocUrl,
+        busy: storyImportBusy,
+        status: storyImportStatus,
+        error: storyImportError,
+        onModeChange: setStoryImportMode,
+        onMarkdownChange: setStoryMarkdownInput,
+        onGoogleDocUrlChange: setStoryGoogleDocUrl,
+        onSave: () => {
+          void importStoryForActiveProject('markdown');
+        },
+        onFetchGoogleDocs: () => {
+          void importStoryForActiveProject('google_docs');
+        },
+      };
+
+      nextNodes.push({
+        id: `story-${projectGraph.story.id}`,
+        type: 'storyImport',
+        position: { x: 80, y: 120 },
+        draggable: true,
+        data: nodeData,
+      });
+    }
+
+    const characterNodes = projectGraph.characterNodes ?? [];
+    characterNodes.forEach((character, index) => {
+      nextNodes.push({
+        id: `character-${character.id}`,
+        position: { x: 640, y: 120 + index * 190 },
+        data: {
+          label: character.name,
+          description: character.briefMarkdown,
+        },
+      });
+    });
+
+    const styleNodes = projectGraph.styleNodes ?? [];
+    styleNodes.forEach((styleNode, index) => {
+      nextNodes.push({
+        id: `style-${styleNode.id}`,
+        position: { x: 980, y: 120 + index * 190 },
+        data: {
+          label: styleNode.name,
+          description: styleNode.description,
+        },
+      });
+    });
+
+    const storyboardNodes = projectGraph.storyboardNodes ?? [];
+    storyboardNodes.forEach((storyboard, index) => {
+      nextNodes.push({
+        id: `storyboard-${storyboard.id}`,
+        position: { x: 1320, y: 120 + index * 190 },
+        data: {
+          label: storyboard.title,
+          description: 'Storyboard node synced from database.',
+        },
+      });
+    });
+
+    setNodes((current) => {
+      const positionById = new Map(
+        current.map((node) => [node.id, node.position] as const),
+      );
+
+      return nextNodes.map((node) => {
+        const existingPosition = positionById.get(node.id);
+        if (!existingPosition) {
+          return node;
+        }
+
+        return {
+          ...node,
+          position: existingPosition,
+        };
+      });
+    });
+  }, [
+    activeProjectId,
+    importStoryForActiveProject,
+    projectGraph,
+    setNodes,
+    storyGoogleDocUrl,
+    storyImportBusy,
+    storyImportError,
+    storyImportMode,
+    storyImportStatus,
+    storyMarkdownInput,
+  ]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.code !== 'Space' || event.repeat) {
         return;
@@ -1081,9 +1621,17 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         <ReactFlow
           nodes={nodes}
           edges={edges}
-          onNodesChange={onNodesChange}
+          nodeTypes={FLOW_NODE_TYPES}
+          onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
+          defaultViewport={{ x: 0, y: 0, zoom: 0.72 }}
+          minZoom={0.35}
+          maxZoom={1.2}
           fitView
+          fitViewOptions={{
+            maxZoom: 0.72,
+            padding: 0.2,
+          }}
           className='bg-background'>
           <MiniMap pannable zoomable />
           <Controls />
@@ -1157,7 +1705,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
                   }
                 }}
                 placeholder='Debug: type instead of talking'
-                className='h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm'
+                className='nowheel nopan h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm'
               />
               <Button
                 variant='outline'

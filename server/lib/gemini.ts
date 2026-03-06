@@ -209,6 +209,45 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
                 result,
               );
 
+              const resultOk =
+                result &&
+                typeof result === 'object' &&
+                (result as Record<string, unknown>).ok === true;
+              const shouldNotifyProjectChanged =
+                resultOk &&
+                [
+                  'create_story_node',
+                  'sync_story_node',
+                  'generate_character_brief',
+                  'generate_character_inspiration',
+                  'generate_storyboard',
+                ].includes(toolName);
+
+              if (
+                shouldNotifyProjectChanged &&
+                typeof context.projectId === 'string' &&
+                context.projectId.trim()
+              ) {
+                context.ws.send(
+                  JSON.stringify({
+                    type: 'agent.project.changed',
+                    payload: {
+                      projectId: context.projectId,
+                      sourceTool: toolName,
+                    },
+                  }),
+                );
+
+                recordMonitorActionSent(
+                  context.debugSessionId,
+                  'agent.project.changed',
+                  {
+                    projectId: context.projectId,
+                    sourceTool: toolName,
+                  },
+                );
+              }
+
               if (
                 toolName === 'set_active_project' &&
                 ok &&
