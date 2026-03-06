@@ -86,6 +86,8 @@ model Story {
   title            String
   sourceDocUrl     String?
   markdown         String
+  positionX        Float?
+  positionY        Float?
   importedAt       DateTime @default(now())
   backgroundPrompt String?
   createdAt        DateTime @default(now())
@@ -102,6 +104,8 @@ model CharacterNode {
   profileJson       String?
   inspirationPrompt String?
   inspirationUrls   String[]
+  positionX         Float?
+  positionY         Float?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -113,6 +117,8 @@ model StyleNode {
   projectId   String   @db.ObjectId
   name        String
   description String
+  positionX   Float?
+  positionY   Float?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -124,6 +130,8 @@ model StoryboardNode {
   projectId  String   @db.ObjectId
   title      String
   shotsJson  String
+  positionX  Float?
+  positionY  Float?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

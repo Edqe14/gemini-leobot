@@ -2,6 +2,7 @@ import { GoogleGenAI, type GoogleGenAIOptions } from '@google/genai';
 import { prisma } from '../lib/db';
 import { env } from '../lib/env';
 import { z } from 'zod';
+import { allocateNodePositions } from './node-position';
 
 type ToolContext = {
   userId: string;
@@ -1302,8 +1303,24 @@ export async function generateCharacterBriefTool(context: ToolContext) {
     derivedFromStory = true;
   }
 
-  const createdNodes = [];
-  for (const draft of drafts) {
+  const createdNodes: Array<{
+    id: string;
+    projectId: string;
+    name: string;
+    briefMarkdown: string;
+    profileJson: string | null;
+    inspirationPrompt: string | null;
+    inspirationUrls: string[];
+    createdAt: Date;
+    updatedAt: Date;
+  }> = [];
+  const allocatedPositions = await allocateNodePositions(
+    projectId,
+    drafts.length,
+  );
+
+  for (const [index, draft] of drafts.entries()) {
+    const allocatedPosition = allocatedPositions[index];
     const briefMarkdown = buildCharacterBriefMarkdown(draft);
     const profileJson = Object.keys(draft.profile).length
       ? JSON.stringify(draft.profile)
@@ -1316,6 +1333,8 @@ export async function generateCharacterBriefTool(context: ToolContext) {
         briefMarkdown,
         profileJson,
         inspirationUrls: [],
+        positionX: allocatedPosition?.x ?? 640,
+        positionY: allocatedPosition?.y ?? 120,
       },
       select: {
         id: true,
@@ -1378,6 +1397,8 @@ export async function generateCharacterInspirationTool(context: ToolContext) {
     throw new Error('projectId is required for inspiration generation');
   }
 
+  const [position] = await allocateNodePositions(context.projectId, 1);
+
   const styleNode = await prisma.styleNode.create({
     data: {
       projectId: context.projectId,
@@ -1386,6 +1407,8 @@ export async function generateCharacterInspirationTool(context: ToolContext) {
         context.args.description ??
           'Generated style reference from story and character brief.',
       ),
+      positionX: position?.x ?? 980,
+      positionY: position?.y ?? 120,
     },
   });
 
@@ -1397,11 +1420,15 @@ export async function generateStoryboardTool(context: ToolContext) {
     throw new Error('projectId is required for storyboard generation');
   }
 
+  const [position] = await allocateNodePositions(context.projectId, 1);
+
   const storyboard = await prisma.storyboardNode.create({
     data: {
       projectId: context.projectId,
       title: String(context.args.title ?? 'Storyboard Draft'),
       shotsJson: JSON.stringify(context.args.shots ?? []),
+      positionX: position?.x ?? 1320,
+      positionY: position?.y ?? 120,
     },
   });
 

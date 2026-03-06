@@ -18,6 +18,11 @@ const updateCharacterNodeSchema = z.object({
   traitsText: z.string().max(12000).default(''),
 });
 
+const updateNodePositionSchema = z.object({
+  positionX: z.number().finite(),
+  positionY: z.number().finite(),
+});
+
 export const projectsRouter = new Hono();
 
 async function requireProjectAccess(userId: string, projectId: string) {
@@ -312,6 +317,170 @@ projectsRouter.patch(
     });
 
     return c.json({ ok: true, node });
+  },
+);
+
+projectsRouter.patch('/api/projects/:projectId/story/position', async (c) => {
+  const session = await getSessionFromHeaders(c.req.raw.headers);
+  if (!session) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const projectId = c.req.param('projectId');
+  const project = await requireProjectAccess(session.user.id, projectId);
+  if (!project) {
+    return c.json({ error: 'Project not found' }, 404);
+  }
+
+  const body = await c.req.json();
+  const payload = updateNodePositionSchema.parse(body);
+
+  const updated = await prisma.story.updateMany({
+    where: { projectId },
+    data: {
+      positionX: payload.positionX,
+      positionY: payload.positionY,
+    },
+  });
+
+  if (!updated.count) {
+    return c.json({ error: 'Story node not found' }, 404);
+  }
+
+  return c.json({
+    ok: true,
+    nodeType: 'story',
+    positionX: payload.positionX,
+    positionY: payload.positionY,
+  });
+});
+
+projectsRouter.patch(
+  '/api/projects/:projectId/character-nodes/:nodeId/position',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload = updateNodePositionSchema.parse(body);
+
+    const updated = await prisma.characterNode.updateMany({
+      where: {
+        id: nodeId,
+        projectId,
+      },
+      data: {
+        positionX: payload.positionX,
+        positionY: payload.positionY,
+      },
+    });
+
+    if (!updated.count) {
+      return c.json({ error: 'Character node not found' }, 404);
+    }
+
+    return c.json({
+      ok: true,
+      nodeType: 'character',
+      nodeId,
+      positionX: payload.positionX,
+      positionY: payload.positionY,
+    });
+  },
+);
+
+projectsRouter.patch(
+  '/api/projects/:projectId/style-nodes/:nodeId/position',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload = updateNodePositionSchema.parse(body);
+
+    const updated = await prisma.styleNode.updateMany({
+      where: {
+        id: nodeId,
+        projectId,
+      },
+      data: {
+        positionX: payload.positionX,
+        positionY: payload.positionY,
+      },
+    });
+
+    if (!updated.count) {
+      return c.json({ error: 'Style node not found' }, 404);
+    }
+
+    return c.json({
+      ok: true,
+      nodeType: 'style',
+      nodeId,
+      positionX: payload.positionX,
+      positionY: payload.positionY,
+    });
+  },
+);
+
+projectsRouter.patch(
+  '/api/projects/:projectId/storyboard-nodes/:nodeId/position',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload = updateNodePositionSchema.parse(body);
+
+    const updated = await prisma.storyboardNode.updateMany({
+      where: {
+        id: nodeId,
+        projectId,
+      },
+      data: {
+        positionX: payload.positionX,
+        positionY: payload.positionY,
+      },
+    });
+
+    if (!updated.count) {
+      return c.json({ error: 'Storyboard node not found' }, 404);
+    }
+
+    return c.json({
+      ok: true,
+      nodeType: 'storyboard',
+      nodeId,
+      positionX: payload.positionX,
+      positionY: payload.positionY,
+    });
   },
 );
 

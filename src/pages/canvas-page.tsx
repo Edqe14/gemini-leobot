@@ -4,6 +4,7 @@ import {
   Controls,
   MiniMap,
   type NodeChange,
+  type NodePositionChange,
   type Node,
   type NodeProps,
   ReactFlow,
@@ -51,6 +52,8 @@ type StoryRecord = {
   title: string;
   markdown: string;
   sourceDocUrl?: string | null;
+  positionX?: number | null;
+  positionY?: number | null;
 };
 
 type CharacterNodeRecord = {
@@ -58,6 +61,8 @@ type CharacterNodeRecord = {
   name: string;
   briefMarkdown: string;
   profileJson?: string | null;
+  positionX?: number | null;
+  positionY?: number | null;
 };
 
 type CharacterProfileRecord = {
@@ -75,11 +80,15 @@ type StyleNodeRecord = {
   id: string;
   name: string;
   description: string;
+  positionX?: number | null;
+  positionY?: number | null;
 };
 
 type StoryboardNodeRecord = {
   id: string;
   title: string;
+  positionX?: number | null;
+  positionY?: number | null;
 };
 
 type ProjectGraphRecord = {
@@ -107,6 +116,62 @@ type CharacterNodeUpdateResponse = {
   node?: CharacterNodeRecord;
   error?: string;
 };
+
+const CANVAS_GRID_START_X = 80;
+const CANVAS_GRID_START_Y = 120;
+const CANVAS_GRID_STEP_X = 360;
+const CANVAS_GRID_STEP_Y = 220;
+const CANVAS_GRID_MAX_COLUMNS = 8;
+const CANVAS_GRID_MAX_ROWS = 200;
+
+function getGridCellKey(position: { x: number; y: number }) {
+  const col = Math.max(
+    0,
+    Math.round((position.x - CANVAS_GRID_START_X) / CANVAS_GRID_STEP_X),
+  );
+  const row = Math.max(
+    0,
+    Math.round((position.y - CANVAS_GRID_START_Y) / CANVAS_GRID_STEP_Y),
+  );
+
+  return `${col}:${row}`;
+}
+
+function reserveGridCell(
+  occupiedCells: Set<string>,
+  position: { x: number; y: number },
+) {
+  const key = getGridCellKey(position);
+  if (occupiedCells.has(key)) {
+    return false;
+  }
+
+  occupiedCells.add(key);
+  return true;
+}
+
+function allocateNextGridPosition(occupiedCells: Set<string>) {
+  for (let row = 0; row < CANVAS_GRID_MAX_ROWS; row += 1) {
+    for (let col = 0; col < CANVAS_GRID_MAX_COLUMNS; col += 1) {
+      const key = `${col}:${row}`;
+      if (occupiedCells.has(key)) {
+        continue;
+      }
+
+      occupiedCells.add(key);
+      return {
+        x: CANVAS_GRID_START_X + col * CANVAS_GRID_STEP_X,
+        y: CANVAS_GRID_START_Y + row * CANVAS_GRID_STEP_Y,
+      };
+    }
+  }
+
+  const fallbackRow = CANVAS_GRID_MAX_ROWS + occupiedCells.size;
+  return {
+    x: CANVAS_GRID_START_X,
+    y: CANVAS_GRID_START_Y + fallbackRow * CANVAS_GRID_STEP_Y,
+  };
+}
 
 type CharacterDraftState = {
   name: string;
@@ -685,6 +750,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const pendingContextSwitchRef = useRef<PendingContextSwitch | null>(null);
   const pendingContextSwitchTimerRef = useRef<number | null>(null);
   const characterAutosaveTimersRef = useRef<Map<string, number>>(new Map());
+  const nodePositionSaveTimersRef = useRef<Map<string, number>>(new Map());
+  const lastSavedNodePositionsRef = useRef<
+    Record<string, { x: number; y: number }>
+  >({});
   const characterDraftsRef = useRef<Record<string, CharacterDraftState>>({});
   const micActiveRef = useRef(false);
   const micStartingRef = useRef(false);
@@ -1415,6 +1484,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         window.clearTimeout(timerId);
       }
       characterAutosaveTimersRef.current.clear();
+      for (const timerId of nodePositionSaveTimersRef.current.values()) {
+        window.clearTimeout(timerId);
+      }
+      nodePositionSaveTimersRef.current.clear();
+      lastSavedNodePositionsRef.current = {};
       setStoryMarkdownInput('');
       setStoryGoogleDocUrl('');
       setStoryImportStatus('');
@@ -1755,19 +1829,138 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     [activeProjectId],
   );
 
+  const saveNodePosition = useCallback(
+    async (nodeId: string, position: { x: number; y: number }) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) {
+        return;
+      }
+
+      let endpoint = '';
+      if (nodeId.startsWith('story-')) {
+        endpoint = `/api/projects/${encodeURIComponent(projectId)}/story/position`;
+      } else if (nodeId.startsWith('character-')) {
+        endpoint = `/api/projects/${encodeURIComponent(projectId)}/character-nodes/${encodeURIComponent(
+          nodeId.replace('character-', ''),
+        )}/position`;
+      } else if (nodeId.startsWith('style-')) {
+        endpoint = `/api/projects/${encodeURIComponent(projectId)}/style-nodes/${encodeURIComponent(
+          nodeId.replace('style-', ''),
+        )}/position`;
+      } else if (nodeId.startsWith('storyboard-')) {
+        endpoint = `/api/projects/${encodeURIComponent(projectId)}/storyboard-nodes/${encodeURIComponent(
+          nodeId.replace('storyboard-', ''),
+        )}/position`;
+      } else {
+        return;
+      }
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            positionX: position.x,
+            positionY: position.y,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to save node position.');
+        }
+
+        lastSavedNodePositionsRef.current[nodeId] = position;
+      } catch (error) {
+        setSocketStatus(
+          error instanceof Error
+            ? error.message
+            : 'Failed to save node position.',
+        );
+      }
+    },
+    [activeProjectId],
+  );
+
+  const queueNodePositionSave = useCallback(
+    (nodeId: string, position: { x: number; y: number }) => {
+      const existingTimer = nodePositionSaveTimersRef.current.get(nodeId);
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+
+      const timerId = window.setTimeout(() => {
+        void saveNodePosition(nodeId, position);
+        nodePositionSaveTimersRef.current.delete(nodeId);
+      }, 180);
+
+      nodePositionSaveTimersRef.current.set(nodeId, timerId);
+    },
+    [saveNodePosition],
+  );
+
   const handleNodesChange = useCallback(
     (changes: NodeChange<Node<CanvasNodeData>>[]) => {
       onNodesChange(changes);
 
+      const positionChanges = changes.filter(
+        (
+          change,
+        ): change is NodePositionChange & {
+          id: string;
+          position: { x: number; y: number };
+        } =>
+          change.type === 'position' &&
+          'id' in change &&
+          !!change.position &&
+          typeof change.position.x === 'number' &&
+          typeof change.position.y === 'number',
+      );
+
+      positionChanges.forEach((change) => {
+        if (change.dragging) {
+          return;
+        }
+
+        const nextPosition = {
+          x: change.position.x,
+          y: change.position.y,
+        };
+
+        const previousSaved = lastSavedNodePositionsRef.current[change.id];
+        if (
+          previousSaved &&
+          Math.abs(previousSaved.x - nextPosition.x) < 0.5 &&
+          Math.abs(previousSaved.y - nextPosition.y) < 0.5
+        ) {
+          return;
+        }
+
+        queueNodePositionSave(change.id, nextPosition);
+      });
+
       const removedNodeIds = changes
-        .filter((change) => change.type === 'remove')
+        .filter(
+          (
+            change,
+          ): change is NodeChange<Node<CanvasNodeData>> & { id: string } =>
+            change.type === 'remove' && 'id' in change,
+        )
         .map((change) => change.id);
 
       removedNodeIds.forEach((id) => {
+        const timer = nodePositionSaveTimersRef.current.get(id);
+        if (timer) {
+          window.clearTimeout(timer);
+          nodePositionSaveTimersRef.current.delete(id);
+        }
+        delete lastSavedNodePositionsRef.current[id];
         void deleteNodeFromDatabase(id);
       });
     },
-    [deleteNodeFromDatabase, onNodesChange],
+    [deleteNodeFromDatabase, onNodesChange, queueNodePositionSave],
   );
 
   useEffect(() => {
@@ -1777,6 +1970,30 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     }
 
     const nextNodes: Node<CanvasNodeData>[] = [];
+    const occupiedCells = new Set<string>();
+
+    const resolveNodePosition = (
+      positionX: number | null | undefined,
+      positionY: number | null | undefined,
+      legacyFallback: { x: number; y: number },
+    ) => {
+      if (Number.isFinite(positionX) && Number.isFinite(positionY)) {
+        const persisted = {
+          x: positionX as number,
+          y: positionY as number,
+        };
+
+        if (reserveGridCell(occupiedCells, persisted)) {
+          return persisted;
+        }
+      }
+
+      if (reserveGridCell(occupiedCells, legacyFallback)) {
+        return legacyFallback;
+      }
+
+      return allocateNextGridPosition(occupiedCells);
+    };
 
     if (projectGraph.story) {
       const nodeData: StoryImportNodeData = {
@@ -1801,7 +2018,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       nextNodes.push({
         id: `story-${projectGraph.story.id}`,
         type: 'storyImport',
-        position: { x: 80, y: 120 },
+        position: resolveNodePosition(
+          projectGraph.story.positionX,
+          projectGraph.story.positionY,
+          { x: 80, y: 120 },
+        ),
         draggable: true,
         data: nodeData,
       });
@@ -1821,7 +2042,14 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       nextNodes.push({
         id: `character-${character.id}`,
         type: 'characterCard',
-        position: { x: 640, y: 120 + index * 440 },
+        position: resolveNodePosition(
+          character.positionX,
+          character.positionY,
+          {
+            x: 640,
+            y: 120 + index * 440,
+          },
+        ),
         data: {
           characterId: character.id,
           name: draft.name,
@@ -1843,7 +2071,14 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     styleNodes.forEach((styleNode, index) => {
       nextNodes.push({
         id: `style-${styleNode.id}`,
-        position: { x: 980, y: 120 + index * 190 },
+        position: resolveNodePosition(
+          styleNode.positionX,
+          styleNode.positionY,
+          {
+            x: 980,
+            y: 120 + index * 190,
+          },
+        ),
         data: {
           label: styleNode.name,
           description: styleNode.description,
@@ -1855,7 +2090,14 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     storyboardNodes.forEach((storyboard, index) => {
       nextNodes.push({
         id: `storyboard-${storyboard.id}`,
-        position: { x: 1320, y: 120 + index * 190 },
+        position: resolveNodePosition(
+          storyboard.positionX,
+          storyboard.positionY,
+          {
+            x: 1320,
+            y: 120 + index * 190,
+          },
+        ),
         data: {
           label: storyboard.title,
           description: 'Storyboard node synced from database.',

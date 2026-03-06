@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/db';
 import { getSessionFromHeaders } from '../lib/auth';
 import { importGoogleDocAsMarkdown } from '../services/story-import';
+import { allocateNodePositions } from '../services/node-position';
 
 const importSchema = z.object({
   sourceUrl: z.string().url().optional(),
@@ -54,6 +55,8 @@ storyRouter.post('/api/projects/:projectId/story/import', async (c) => {
         ?.replace('# ', '') || 'Imported Story';
   }
 
+  const [createPosition] = await allocateNodePositions(projectId, 1);
+
   const story = await prisma.story.upsert({
     where: { projectId },
     update: {
@@ -64,6 +67,8 @@ storyRouter.post('/api/projects/:projectId/story/import', async (c) => {
       backgroundPrompt: 'Auto-generated from story import.',
     },
     create: {
+      positionX: createPosition?.x ?? 80,
+      positionY: createPosition?.y ?? 120,
       projectId,
       sourceDocUrl,
       title,
