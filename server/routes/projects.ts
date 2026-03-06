@@ -7,6 +7,11 @@ import {
   getProjectForUser,
   listProjectsForUser,
 } from '../services/project-service';
+import {
+  regenerateCharacterDesignOptionsForUser,
+  selectCharacterDesignOptionForUser,
+  updateCharacterDesignNodePositionForUser,
+} from '../services/tools';
 
 const createProjectSchema = z.object({
   name: z.string().min(1).max(120),
@@ -30,6 +35,14 @@ const updateStyleNodeSchema = z.object({
 const updateNodePositionSchema = z.object({
   positionX: z.number().finite(),
   positionY: z.number().finite(),
+});
+
+const regenerateCharacterDesignSchema = z.object({
+  optionsCount: z.coerce.number().int().min(1).max(4).optional(),
+});
+
+const selectCharacterDesignSchema = z.object({
+  optionId: z.string().trim().min(1),
 });
 
 export const projectsRouter = new Hono();
@@ -381,6 +394,82 @@ projectsRouter.patch(
   },
 );
 
+projectsRouter.post(
+  '/api/projects/:projectId/character-nodes/:nodeId/designs/regenerate',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const payload = regenerateCharacterDesignSchema.parse(body);
+
+    const result = await regenerateCharacterDesignOptionsForUser({
+      userId: session.user.id,
+      projectId,
+      characterNodeId: nodeId,
+      optionsCount: payload.optionsCount,
+    });
+
+    if (!result.ok) {
+      return c.json({ error: result.message }, 400);
+    }
+
+    return c.json({
+      ok: true,
+      message: result.message,
+      node: result.node,
+      generatedCount: result.generatedCount,
+      selectedCharacterDesignId: result.selectedCharacterDesignId,
+    });
+  },
+);
+
+projectsRouter.patch(
+  '/api/projects/:projectId/character-nodes/:nodeId/design-selection',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload = selectCharacterDesignSchema.parse(body);
+
+    const result = await selectCharacterDesignOptionForUser({
+      userId: session.user.id,
+      projectId,
+      characterNodeId: nodeId,
+      optionId: payload.optionId,
+    });
+
+    if (!result.ok) {
+      return c.json({ error: result.message }, 400);
+    }
+
+    return c.json({
+      ok: true,
+      message: result.message,
+      node: result.node,
+    });
+  },
+);
+
 projectsRouter.patch('/api/projects/:projectId/story/position', async (c) => {
   const session = await getSessionFromHeaders(c.req.raw.headers);
   if (!session) {
@@ -512,6 +601,46 @@ projectsRouter.patch(
     return c.json({
       ok: true,
       nodeType: 'character',
+      nodeId,
+      positionX: payload.positionX,
+      positionY: payload.positionY,
+    });
+  },
+);
+
+projectsRouter.patch(
+  '/api/projects/:projectId/character-nodes/:nodeId/design-position',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload = updateNodePositionSchema.parse(body);
+
+    const result = await updateCharacterDesignNodePositionForUser({
+      userId: session.user.id,
+      projectId,
+      characterNodeId: nodeId,
+      positionX: payload.positionX,
+      positionY: payload.positionY,
+    });
+
+    if (!result.ok) {
+      return c.json({ error: result.message }, 400);
+    }
+
+    return c.json({
+      ok: true,
+      nodeType: 'character-design',
       nodeId,
       positionX: payload.positionX,
       positionY: payload.positionY,

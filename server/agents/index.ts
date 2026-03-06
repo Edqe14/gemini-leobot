@@ -2,6 +2,7 @@ import { HomeAgent } from './home-agent';
 import { ProjectAgent } from './project-agent';
 import type { AgentDefinition } from './types';
 import type { FunctionDeclaration } from '@google/genai';
+import type { AgentToolRuntimeEvent } from './types';
 
 type ActiveAgentInput = {
   projectId?: string;
@@ -14,6 +15,7 @@ type AgentToolCallInput = {
   projectId?: string;
   name: string;
   args?: Record<string, unknown>;
+  emitEvent?: (event: AgentToolRuntimeEvent) => void;
 };
 
 function normalizeAgentName(value: string) {
@@ -80,6 +82,7 @@ export async function runAgentTool(input: AgentToolCallInput) {
     userId: input.userId,
     projectId: input.projectId,
     args: input.args ?? {},
+    emitEvent: input.emitEvent,
   });
 }
 

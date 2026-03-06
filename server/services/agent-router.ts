@@ -1,10 +1,12 @@
 import { getAllowedToolNamesForContext, runAgentTool } from '../agents';
+import type { AgentToolRuntimeEvent } from '../agents/types';
 
 type AgentToolCallInput = {
   userId: string;
   projectId?: string;
   name: string;
   args?: Record<string, unknown>;
+  emitEvent?: (event: AgentToolRuntimeEvent) => void;
 };
 
 export async function handleAgentToolCall(input: AgentToolCallInput) {
@@ -22,7 +24,10 @@ export async function handleAgentToolCall(input: AgentToolCallInput) {
     };
   }
 
-  return runAgentTool(input);
+  return runAgentTool({
+    ...input,
+    emitEvent: input.emitEvent,
+  });
 }
 
 export function getAllowedTools(hasActiveProject: boolean) {

@@ -2,6 +2,7 @@ import { Type } from '@google/genai';
 import type { AgentDefinition } from './types';
 import {
   createStoryNodeTool,
+  generateCharacterDesignTool,
   generateCharacterBriefTool,
   generateCharacterInspirationTool,
   getProjectStyleNodeTool,
@@ -180,6 +181,32 @@ export const ProjectAgent: AgentDefinition = {
       handler: generateCharacterBriefTool,
     },
     {
+      name: 'generate_character_design',
+      description:
+        'Generate character design image options using Nano Banana (Gemini image model) for all characters or for a specific character by name.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          characterName: {
+            type: Type.STRING,
+            description:
+              'Optional character name. If provided, generate only for this character. If omitted, generate for all character nodes in the active project.',
+          },
+          optionsCount: {
+            type: Type.NUMBER,
+            description:
+              'Optional number of design options to generate per character. Default is 3. Allowed range is 1-4.',
+          },
+          replaceExisting: {
+            type: Type.BOOLEAN,
+            description:
+              'Optional. If true (default), replace current options with new ones. If false, append new options.',
+          },
+        },
+      },
+      handler: generateCharacterDesignTool,
+    },
+    {
       name: 'generate_character_inspiration',
       description:
         'Legacy alias. Upsert the canonical project style node based on provided style direction.',
@@ -319,6 +346,9 @@ export const ProjectAgent: AgentDefinition = {
     'generate_character_brief derives story-based drafts with a separate non-live completion sub-agent and uses active story markdown as input context.',
     'generate_character_brief returns storyContext (title + markdown). Use it as source-of-truth context when drafting or revising character briefs in follow-up responses.',
     'When deriving characters from story text, include only actors/people participating in events. Exclude product names, tools, platforms, locations, organizations, and other non-character entities.',
+    'When the user asks generally for character designs (for example: "generate all character designs"), call generate_character_design without characterName so it runs for all character nodes.',
+    'When the user asks for a specific character design (for example: "generate character design for Maya"), call generate_character_design with characterName set to that character only.',
+    'generate_character_design requires existing character nodes. If there are none, clearly tell the user to create/import character nodes first.',
     'Style direction is project context. Resolve canonical style state with get_project_style_node before major rewrite/retouch guidance.',
     'When the user asks to create/update/adjust style guidance, always execute a mutating style tool (upsert_project_style_node or refine_project_style_node) before responding.',
     'For small explicit style edits, call upsert_project_style_node directly.',
@@ -328,8 +358,9 @@ export const ProjectAgent: AgentDefinition = {
   capabilities: [
     '1. Create story nodes and prepare project story workspace.',
     '2. Generate character brief nodes from story context.',
-    '3. Generate character design/style inspiration nodes.',
-    '3a. Maintain one evolving project style node for writing, character, art, pacing, and extra style dimensions.',
+    '3. Generate character design image options from character + style nodes.',
+    '3a. Generate character design/style inspiration nodes.',
+    '3b. Maintain one evolving project style node for writing, character, art, pacing, and extra style dimensions.',
     '4. Generate storyboard draft nodes and shot outlines.',
     '5. Keep collaborating through short iterative creative direction.',
   ],

@@ -2,10 +2,16 @@ import type { FunctionDeclaration } from '@google/genai';
 
 export type AgentContextKind = 'home' | 'project';
 
+export type AgentToolRuntimeEvent = {
+  type: string;
+  payload?: unknown;
+};
+
 export type AgentToolHandlerContext = {
   userId: string;
   projectId?: string;
   args: Record<string, unknown>;
+  emitEvent?: (event: AgentToolRuntimeEvent) => void;
 };
 
 export type AgentToolHandler = (

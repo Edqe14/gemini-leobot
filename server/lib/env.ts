@@ -48,6 +48,9 @@ const envSchema = z
     GOOGLE_CLOUD_LOCATION: z.string().min(1).optional(),
     GEMINI_LIVE_MODEL: z.string().default('gemini-live-2.5-flash-preview'),
     GEMINI_CHARACTER_SUBAGENT_MODEL: z.string().default('gemini-2.5-flash'),
+    GEMINI_CHARACTER_DESIGN_IMAGE_MODEL: z
+      .string()
+      .default('imagen-4.0-generate-001'),
     DEBUG_MONITOR_ENABLED: z
       .preprocess(parseBooleanEnv, z.boolean())
       .default(false),

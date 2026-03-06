@@ -190,6 +190,14 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
                   projectId: context.projectId,
                   name: toolName,
                   args: call.args,
+                  emitEvent: (event) => {
+                    context.ws.send(JSON.stringify(event));
+                    recordMonitorActionSent(
+                      context.debugSessionId,
+                      event.type,
+                      event.payload,
+                    );
+                  },
                 });
               } catch (error) {
                 ok = false;
@@ -213,12 +221,18 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
                 result &&
                 typeof result === 'object' &&
                 (result as Record<string, unknown>).ok === true;
+              const isDeferred =
+                result &&
+                typeof result === 'object' &&
+                (result as Record<string, unknown>).deferred === true;
               const shouldNotifyProjectChanged =
                 resultOk &&
+                !isDeferred &&
                 [
                   'create_story_node',
                   'sync_story_node',
                   'generate_character_brief',
+                  'generate_character_design',
                   'generate_character_inspiration',
                   'get_project_style_node',
                   'upsert_project_style_node',

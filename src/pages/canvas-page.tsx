@@ -77,6 +77,22 @@ type CharacterProfileRecord = {
   goals?: string;
   notes?: string;
   attributes?: Record<string, string>;
+  characterDesigns?: CharacterDesignOptionRecord[];
+  selectedCharacterDesignId?: string;
+  characterDesignPrompt?: string;
+  characterDesignNodePosition?: {
+    x: number;
+    y: number;
+  };
+  characterDesignGeneratedAt?: string;
+};
+
+type CharacterDesignOptionRecord = {
+  id: string;
+  imageUrl: string;
+  imageDataUrl?: string;
+  prompt?: string;
+  createdAt?: string;
 };
 
 type StyleNodeRecord = {
@@ -125,6 +141,20 @@ type CharacterNodeUpdateResponse = {
   error?: string;
 };
 
+type CharacterDesignRegenerateResponse = {
+  ok?: boolean;
+  node?: CharacterNodeRecord;
+  message?: string;
+  error?: string;
+};
+
+type CharacterDesignSelectionResponse = {
+  ok?: boolean;
+  node?: CharacterNodeRecord;
+  message?: string;
+  error?: string;
+};
+
 type StyleSaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 type StyleDraftState = {
@@ -142,6 +172,12 @@ type StyleNodeUpdateResponse = {
   ok?: boolean;
   node?: StyleNodeRecord;
   error?: string;
+};
+
+type CharacterDesignUiState = {
+  mode: 'options' | 'picked';
+  busy: boolean;
+  error: string;
 };
 
 const CANVAS_GRID_START_X = 80;
@@ -229,6 +265,7 @@ type StoryImportNodeData = {
 type CharacterCardNodeData = {
   characterId: string;
   hasIncomingConnection: boolean;
+  hasOutgoingConnection: boolean;
   name: string;
   description: string;
   traitsText: string;
@@ -237,6 +274,22 @@ type CharacterCardNodeData = {
   onNameChange: (value: string) => void;
   onDescriptionChange: (value: string) => void;
   onTraitsChange: (value: string) => void;
+};
+
+type CharacterDesignNodeData = {
+  characterId: string;
+  characterName: string;
+  hasIncomingConnection: boolean;
+  hasOutgoingConnection: boolean;
+  options: CharacterDesignOptionRecord[];
+  selectedOptionId: string;
+  mode: 'options' | 'picked';
+  busy: boolean;
+  error: string;
+  onRetry: () => void;
+  onPick: (optionId: string) => void;
+  onEdit: () => void;
+  onCancel: () => void;
 };
 
 type StyleCardNodeData = {
@@ -262,9 +315,14 @@ type CanvasNodeData =
   | CreativeNodeData
   | StoryImportNodeData
   | CharacterCardNodeData
+  | CharacterDesignNodeData
   | StyleCardNodeData;
 type StoryImportCanvasNode = Node<StoryImportNodeData, 'storyImport'>;
 type CharacterCardCanvasNode = Node<CharacterCardNodeData, 'characterCard'>;
+type CharacterDesignCanvasNode = Node<
+  CharacterDesignNodeData,
+  'characterDesign'
+>;
 type StyleCardCanvasNode = Node<StyleCardNodeData, 'styleCard'>;
 
 type PendingContextSwitch = {
@@ -460,6 +518,34 @@ function CharacterCardNodeComponent({
           />
         </>
       ) : null}
+      {data.hasOutgoingConnection ? (
+        <>
+          <Handle
+            type='source'
+            id={getSourceHandleId('top')}
+            position={Position.Top}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('right')}
+            position={Position.Right}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('bottom')}
+            position={Position.Bottom}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('left')}
+            position={Position.Left}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+        </>
+      ) : null}
       <div className='space-y-3'>
         <div className='rounded-xl border border-border bg-background px-4 py-3'>
           <input
@@ -625,6 +711,230 @@ function StyleCardNodeComponent({ data }: NodeProps<StyleCardCanvasNode>) {
   );
 }
 
+function CharacterDesignNodeComponent({
+  data,
+}: NodeProps<CharacterDesignCanvasNode>) {
+  const selected = data.options.find(
+    (item) => item.id === data.selectedOptionId,
+  );
+  const isPickedMode = data.mode === 'picked';
+  const displayName = data.characterName.trim() || 'Character';
+  const [imageRetryByOptionId, setImageRetryByOptionId] = useState<
+    Record<string, number>
+  >({});
+
+  const getImageRetryKey = (optionId: string, rawSrc: string) =>
+    `${optionId}:${rawSrc}`;
+
+  const resolveImageSrc = (optionId: string, rawSrc: string) => {
+    if (!rawSrc || rawSrc.startsWith('data:')) {
+      return rawSrc;
+    }
+
+    const retryCount =
+      imageRetryByOptionId[getImageRetryKey(optionId, rawSrc)] ?? 0;
+    if (!retryCount) {
+      return rawSrc;
+    }
+
+    const separator = rawSrc.includes('?') ? '&' : '?';
+    return `${rawSrc}${separator}retry=${retryCount}`;
+  };
+
+  const queueImageRetry = (optionId: string, rawSrc: string) => {
+    if (!rawSrc || rawSrc.startsWith('data:')) {
+      return;
+    }
+
+    const retryKey = getImageRetryKey(optionId, rawSrc);
+
+    window.setTimeout(() => {
+      setImageRetryByOptionId((current) => {
+        const attempts = current[retryKey] ?? 0;
+        if (attempts >= 2) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [retryKey]: attempts + 1,
+        };
+      });
+    }, 300);
+  };
+
+  return (
+    <Card
+      className={`relative border border-border/90 bg-card shadow-sm ${
+        isPickedMode ? 'w-120 p-2.5' : 'w-220 p-4'
+      }`}>
+      {data.hasIncomingConnection ? (
+        <>
+          <Handle
+            type='target'
+            id={getTargetHandleId('top')}
+            position={Position.Top}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('right')}
+            position={Position.Right}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('bottom')}
+            position={Position.Bottom}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+          <Handle
+            type='target'
+            id={getTargetHandleId('left')}
+            position={Position.Left}
+            className='!h-3 !w-3 !border !border-border !bg-background'
+          />
+        </>
+      ) : null}
+      {data.hasOutgoingConnection ? (
+        <>
+          <Handle
+            type='source'
+            id={getSourceHandleId('top')}
+            position={Position.Top}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('right')}
+            position={Position.Right}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('bottom')}
+            position={Position.Bottom}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+          <Handle
+            type='source'
+            id={getSourceHandleId('left')}
+            position={Position.Left}
+            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+          />
+        </>
+      ) : null}
+
+      <div
+        className={`flex items-center justify-between gap-3 ${isPickedMode ? 'mb-2' : 'mb-3'}`}>
+        <p className='text-lg font-semibold'>
+          Character Design for {displayName}
+        </p>
+        {data.mode === 'options' ? (
+          <div className='flex items-center gap-2'>
+            {data.selectedOptionId ? (
+              <Button
+                type='button'
+                variant='outline'
+                className='nodrag h-8 px-4 text-sm'
+                disabled={data.busy}
+                onClick={data.onCancel}>
+                Cancel
+              </Button>
+            ) : null}
+            <Button
+              type='button'
+              variant='outline'
+              className='nodrag h-8 px-4 text-sm'
+              disabled={data.busy}
+              onClick={data.onRetry}>
+              {data.busy ? 'Generating...' : 'Retry'}
+            </Button>
+          </div>
+        ) : (
+          <Button
+            type='button'
+            variant='outline'
+            className='nodrag h-8 px-4 text-sm'
+            disabled={data.busy}
+            onClick={data.onEdit}>
+            {data.busy ? 'Generating...' : 'Edit'}
+          </Button>
+        )}
+      </div>
+
+      {data.error ? (
+        <p className='mb-3 text-xs text-destructive'>{data.error}</p>
+      ) : null}
+
+      {data.mode === 'picked' && selected ? (
+        <button
+          type='button'
+          className='nodrag block w-full overflow-hidden rounded-2xl border-2 border-emerald-500 bg-background p-2 text-left'
+          disabled={data.busy}
+          onClick={data.onEdit}>
+          <img
+            src={resolveImageSrc(
+              selected.id,
+              selected.imageUrl || selected.imageDataUrl || '',
+            )}
+            alt={`${displayName} selected design`}
+            className='aspect-square w-full rounded-xl object-cover'
+            onError={() => {
+              queueImageRetry(
+                selected.id,
+                selected.imageUrl || selected.imageDataUrl || '',
+              );
+            }}
+          />
+        </button>
+      ) : (
+        <div className='grid grid-cols-3 items-start gap-4'>
+          {data.options.map((option) => {
+            const isSelected = option.id === data.selectedOptionId;
+
+            return (
+              <button
+                key={option.id}
+                type='button'
+                disabled={data.busy}
+                className={`nodrag overflow-hidden rounded-2xl border-2 bg-background p-1 transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  isSelected
+                    ? 'border-emerald-500'
+                    : 'border-emerald-400/60 hover:border-emerald-500'
+                }`}
+                onClick={() => data.onPick(option.id)}>
+                <img
+                  src={resolveImageSrc(
+                    option.id,
+                    option.imageUrl || option.imageDataUrl || '',
+                  )}
+                  alt={`${displayName} design option`}
+                  className='aspect-square w-full rounded-xl object-cover'
+                  onError={() => {
+                    queueImageRetry(
+                      option.id,
+                      option.imageUrl || option.imageDataUrl || '',
+                    );
+                  }}
+                />
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {!data.options.length ? (
+        <p className='text-sm text-muted-foreground'>
+          {data.busy
+            ? 'Generating design options...'
+            : 'No design options yet. Use Retry to generate options.'}
+        </p>
+      ) : null}
+    </Card>
+  );
+}
+
 function mergeCaptionText(previous: string, incoming: string): string {
   const prev = previous.trim();
   const next = incoming.trim();
@@ -667,6 +977,88 @@ function parseCharacterProfile(profileJson?: string | null) {
   } catch {
     return null;
   }
+}
+
+function parseCharacterDesignOptions(profile: CharacterProfileRecord | null) {
+  if (!profile || !Array.isArray(profile.characterDesigns)) {
+    return [] as CharacterDesignOptionRecord[];
+  }
+
+  const parsed = profile.characterDesigns.map(
+    (item): CharacterDesignOptionRecord | null => {
+      const id = typeof item?.id === 'string' ? item.id.trim() : '';
+      const imageUrlFromImageUrl =
+        typeof item?.imageUrl === 'string' ? item.imageUrl.trim() : '';
+      const imageUrlFromDataUrl =
+        typeof item?.imageDataUrl === 'string' ? item.imageDataUrl.trim() : '';
+      const imageUrl = imageUrlFromImageUrl || imageUrlFromDataUrl;
+      if (!id || !imageUrl) {
+        return null;
+      }
+
+      return {
+        id,
+        imageUrl,
+        ...(imageUrlFromDataUrl ? { imageDataUrl: imageUrlFromDataUrl } : {}),
+        ...(typeof item.prompt === 'string' ? { prompt: item.prompt } : {}),
+        ...(typeof item.createdAt === 'string'
+          ? { createdAt: item.createdAt }
+          : {}),
+      };
+    },
+  );
+
+  return parsed.filter((item): item is CharacterDesignOptionRecord =>
+    Boolean(item),
+  );
+}
+
+function resolveSelectedCharacterDesignId(
+  profile: CharacterProfileRecord | null,
+  options: CharacterDesignOptionRecord[],
+) {
+  const selectedId =
+    profile && typeof profile.selectedCharacterDesignId === 'string'
+      ? profile.selectedCharacterDesignId.trim()
+      : '';
+
+  if (selectedId && options.some((item) => item.id === selectedId)) {
+    return selectedId;
+  }
+
+  return options[0]?.id ?? '';
+}
+
+function resolvePersistedSelectedCharacterDesignId(
+  profile: CharacterProfileRecord | null,
+  options: CharacterDesignOptionRecord[],
+) {
+  const selectedId =
+    profile && typeof profile.selectedCharacterDesignId === 'string'
+      ? profile.selectedCharacterDesignId.trim()
+      : '';
+
+  if (selectedId && options.some((item) => item.id === selectedId)) {
+    return selectedId;
+  }
+
+  return '';
+}
+
+function resolveDefaultCharacterDesignMode(
+  profile: CharacterProfileRecord | null,
+  options: CharacterDesignOptionRecord[],
+): CharacterDesignUiState['mode'] {
+  if (!options.length) {
+    return 'options';
+  }
+
+  const persistedSelectedId = resolvePersistedSelectedCharacterDesignId(
+    profile,
+    options,
+  );
+
+  return persistedSelectedId ? 'picked' : 'options';
 }
 
 function buildCharacterTraitsText(profile: CharacterProfileRecord | null) {
@@ -845,10 +1237,12 @@ function extractAudioChunks(payload: unknown): AudioChunk[] {
 
 const StoryImportNode = memo(StoryImportNodeComponent);
 const CharacterCardNode = memo(CharacterCardNodeComponent);
+const CharacterDesignNode = memo(CharacterDesignNodeComponent);
 const StyleCardNode = memo(StyleCardNodeComponent);
 const FLOW_NODE_TYPES = {
   storyImport: StoryImportNode,
   characterCard: CharacterCardNode,
+  characterDesign: CharacterDesignNode,
   styleCard: StyleCardNode,
 };
 
@@ -1038,6 +1432,9 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   >({});
   const [styleDrafts, setStyleDrafts] = useState<
     Record<string, StyleDraftState>
+  >({});
+  const [characterDesignUiState, setCharacterDesignUiState] = useState<
+    Record<string, CharacterDesignUiState>
   >({});
   const [debugTextInput, setDebugTextInput] = useState('');
   const initialProjectIdRef = useRef(activeProjectId);
@@ -1299,6 +1696,34 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         });
       });
 
+      characterNodeIds.forEach((sourceCharacterId) => {
+        const characterId = sourceCharacterId.replace('character-', '');
+        const targetDesignId = `character-design-${characterId}`;
+        const sourcePosition = positionById.get(sourceCharacterId);
+        const targetPosition = positionById.get(targetDesignId);
+        if (!sourcePosition || !targetPosition) {
+          return;
+        }
+
+        const sides = getNearestHandleSides({
+          source: sourcePosition,
+          target: targetPosition,
+        });
+
+        edges.push({
+          id: `edge-${sourceCharacterId}-to-${targetDesignId}`,
+          source: sourceCharacterId,
+          target: targetDesignId,
+          sourceHandle: getSourceHandleId(sides.source),
+          targetHandle: getTargetHandleId(sides.target),
+          type: 'smoothstep',
+          animated: true,
+          style: { strokeWidth: 2 },
+          selectable: false,
+          deletable: false,
+        });
+      });
+
       return edges;
     },
     [projectGraph],
@@ -1444,6 +1869,105 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             changedProjectId === activeProjectIdRef.current.trim()
           ) {
             setProjectGraphRefreshToken((value) => value + 1);
+          }
+
+          return;
+        }
+
+        if (message.type === 'agent.status') {
+          const payload =
+            message.payload && typeof message.payload === 'object'
+              ? (message.payload as Record<string, unknown>)
+              : null;
+
+          const statusMessage =
+            payload && typeof payload.message === 'string'
+              ? payload.message.trim()
+              : '';
+
+          if (statusMessage) {
+            setSocketStatus(statusMessage);
+            setCaptionLines((value) =>
+              updateCaptionLines(value, 'Leo', statusMessage),
+            );
+          }
+
+          const sourceTool =
+            payload && typeof payload.sourceTool === 'string'
+              ? payload.sourceTool.trim()
+              : '';
+          const statusProjectId =
+            payload && typeof payload.projectId === 'string'
+              ? payload.projectId.trim()
+              : '';
+
+          if (
+            sourceTool === 'generate_character_design' &&
+            (!statusProjectId || statusProjectId === activeProjectIdRef.current)
+          ) {
+            const phase =
+              payload && typeof payload.phase === 'string'
+                ? payload.phase.trim().toLowerCase()
+                : '';
+            const ids =
+              payload && Array.isArray(payload.characterNodeIds)
+                ? payload.characterNodeIds
+                    .filter((item): item is string => typeof item === 'string')
+                    .map((item) => item.trim())
+                    .filter(Boolean)
+                : [];
+
+            if (phase === 'started' && ids.length) {
+              setCharacterDesignUiState((current) => {
+                const next = { ...current };
+                ids.forEach((id) => {
+                  next[id] = {
+                    ...(next[id] ?? {
+                      mode: 'options' as const,
+                      busy: false,
+                      error: '',
+                    }),
+                    mode: 'options',
+                    busy: true,
+                    error: '',
+                  };
+                });
+                return next;
+              });
+            }
+
+            if (phase === 'completed') {
+              setCharacterDesignUiState((current) => {
+                if (!ids.length) {
+                  const next: Record<string, CharacterDesignUiState> = {};
+                  for (const [id, value] of Object.entries(current)) {
+                    next[id] = {
+                      ...value,
+                      busy: false,
+                    };
+                  }
+                  return next;
+                }
+
+                const next = { ...current };
+                ids.forEach((id) => {
+                  if (!next[id]) {
+                    next[id] = {
+                      mode: 'options',
+                      busy: false,
+                      error: '',
+                    };
+                    return;
+                  }
+
+                  next[id] = {
+                    ...next[id],
+                    busy: false,
+                  };
+                });
+                return next;
+              });
+            }
           }
 
           return;
@@ -1886,6 +2410,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       setProjectGraph(null);
       setNodes([]);
       setCharacterDrafts({});
+      setCharacterDesignUiState({});
       for (const timerId of characterAutosaveTimersRef.current.values()) {
         window.clearTimeout(timerId);
       }
@@ -1979,6 +2504,38 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           traitsText: derived.traitsText,
           saveState: existing?.saveState === 'saved' ? 'saved' : 'idle',
           saveMessage: existing?.saveState === 'saved' ? 'Saved' : 'Autosave',
+        };
+      }
+
+      return next;
+    });
+  }, [projectGraph]);
+
+  useEffect(() => {
+    if (!projectGraph?.characterNodes?.length) {
+      setCharacterDesignUiState({});
+      return;
+    }
+
+    setCharacterDesignUiState((current) => {
+      const next: Record<string, CharacterDesignUiState> = {};
+
+      for (const character of projectGraph.characterNodes ?? []) {
+        const existing = current[character.id];
+        if (existing?.busy) {
+          next[character.id] = existing;
+          continue;
+        }
+
+        const profile = parseCharacterProfile(character.profileJson);
+        const options = parseCharacterDesignOptions(profile);
+        const defaultMode = resolveDefaultCharacterDesignMode(profile, options);
+
+        next[character.id] = {
+          // Preserve explicit UI mode changes (e.g., picking an option).
+          mode: existing?.mode ?? defaultMode,
+          busy: false,
+          error: existing?.error || '',
         };
       }
 
@@ -2221,6 +2778,216 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     [queueCharacterAutosave],
   );
 
+  const regenerateCharacterDesign = useCallback(
+    async (characterId: string) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) {
+        return;
+      }
+
+      setCharacterDesignUiState((current) => ({
+        ...current,
+        [characterId]: {
+          mode: 'options',
+          busy: true,
+          error: '',
+        },
+      }));
+
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/character-nodes/${encodeURIComponent(characterId)}/designs/regenerate`,
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ optionsCount: 3 }),
+          },
+        );
+
+        const payload = (await response.json()) as
+          | CharacterDesignRegenerateResponse
+          | { error?: string };
+
+        if (!response.ok || !payload || !('ok' in payload) || !payload.ok) {
+          throw new Error(
+            'error' in payload && typeof payload.error === 'string'
+              ? payload.error
+              : 'Failed to regenerate character design options.',
+          );
+        }
+
+        if (payload.node) {
+          setProjectGraph((current) => {
+            if (!current) {
+              return current;
+            }
+
+            return {
+              ...current,
+              characterNodes: (current.characterNodes ?? []).map((node) =>
+                node.id === characterId ? { ...node, ...payload.node! } : node,
+              ),
+            };
+          });
+        }
+
+        setCharacterDesignUiState((current) => ({
+          ...current,
+          [characterId]: {
+            mode: 'options',
+            busy: false,
+            error: '',
+          },
+        }));
+      } catch (error) {
+        setCharacterDesignUiState((current) => ({
+          ...current,
+          [characterId]: {
+            mode: 'options',
+            busy: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : 'Failed to regenerate character design options.',
+          },
+        }));
+      }
+    },
+    [activeProjectId],
+  );
+
+  const selectCharacterDesign = useCallback(
+    async (characterId: string, optionId: string) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) {
+        return;
+      }
+
+      setCharacterDesignUiState((current) => ({
+        ...current,
+        [characterId]: {
+          ...(current[characterId] ?? {
+            mode: 'options' as const,
+            busy: false,
+            error: '',
+          }),
+          busy: true,
+          error: '',
+        },
+      }));
+
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/character-nodes/${encodeURIComponent(characterId)}/design-selection`,
+          {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ optionId }),
+          },
+        );
+
+        const payload = (await response.json()) as
+          | CharacterDesignSelectionResponse
+          | { error?: string };
+
+        if (!response.ok || !payload || !('ok' in payload) || !payload.ok) {
+          throw new Error(
+            'error' in payload && typeof payload.error === 'string'
+              ? payload.error
+              : 'Failed to select character design.',
+          );
+        }
+
+        if (payload.node) {
+          setProjectGraph((current) => {
+            if (!current) {
+              return current;
+            }
+
+            return {
+              ...current,
+              characterNodes: (current.characterNodes ?? []).map((node) =>
+                node.id === characterId ? { ...node, ...payload.node! } : node,
+              ),
+            };
+          });
+        }
+
+        setCharacterDesignUiState((current) => ({
+          ...current,
+          [characterId]: {
+            mode: 'picked',
+            busy: false,
+            error: '',
+          },
+        }));
+      } catch (error) {
+        setCharacterDesignUiState((current) => ({
+          ...current,
+          [characterId]: {
+            ...(current[characterId] ?? {
+              mode: 'options' as const,
+              busy: false,
+              error: '',
+            }),
+            busy: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : 'Failed to select character design.',
+          },
+        }));
+      }
+    },
+    [activeProjectId],
+  );
+
+  const editCharacterDesignSelection = useCallback((characterId: string) => {
+    setCharacterDesignUiState((current) => ({
+      ...(current[characterId]?.busy
+        ? current
+        : {
+            ...current,
+            [characterId]: {
+              ...(current[characterId] ?? {
+                mode: 'options' as const,
+                busy: false,
+                error: '',
+              }),
+              mode: 'options',
+            },
+          }),
+    }));
+  }, []);
+
+  const cancelCharacterDesignEdit = useCallback((characterId: string) => {
+    setCharacterDesignUiState((current) => {
+      const existing = current[characterId];
+      if (existing?.busy) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [characterId]: {
+          ...(existing ?? {
+            mode: 'options' as const,
+            busy: false,
+            error: '',
+          }),
+          mode: 'picked',
+          error: '',
+        },
+      };
+    });
+  }, []);
+
   const saveStyleDraft = useCallback(
     async (styleId: string, draft: StyleDraftState) => {
       const projectId = activeProjectId.trim();
@@ -2371,6 +3138,8 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       let endpoint = '';
       if (nodeId.startsWith('story-')) {
         endpoint = `/api/projects/${encodeURIComponent(projectId)}/story`;
+      } else if (nodeId.startsWith('character-design-')) {
+        return;
       } else if (nodeId.startsWith('character-')) {
         endpoint = `/api/projects/${encodeURIComponent(projectId)}/character-nodes/${encodeURIComponent(
           nodeId.replace('character-', ''),
@@ -2421,9 +3190,15 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       if (nodeId.startsWith('story-')) {
         endpoint = `/api/projects/${encodeURIComponent(projectId)}/story/position`;
       } else if (nodeId.startsWith('character-')) {
-        endpoint = `/api/projects/${encodeURIComponent(projectId)}/character-nodes/${encodeURIComponent(
-          nodeId.replace('character-', ''),
-        )}/position`;
+        if (nodeId.startsWith('character-design-')) {
+          endpoint = `/api/projects/${encodeURIComponent(projectId)}/character-nodes/${encodeURIComponent(
+            nodeId.replace('character-design-', ''),
+          )}/design-position`;
+        } else {
+          endpoint = `/api/projects/${encodeURIComponent(projectId)}/character-nodes/${encodeURIComponent(
+            nodeId.replace('character-', ''),
+          )}/position`;
+        }
       } else if (nodeId.startsWith('style-')) {
         endpoint = `/api/projects/${encodeURIComponent(projectId)}/style-nodes/${encodeURIComponent(
           nodeId.replace('style-', ''),
@@ -2532,7 +3307,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         .map((change) => change.id);
 
       removedNodeIds.forEach((id) => {
-        if (id.startsWith('character-')) {
+        if (
+          id.startsWith('character-') &&
+          !id.startsWith('character-design-')
+        ) {
           const characterId = id.replace('character-', '');
           const autosaveTimer =
             characterAutosaveTimersRef.current.get(characterId);
@@ -2575,6 +3353,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     const characterNodes = projectGraph.characterNodes ?? [];
     const styleNodes = projectGraph.styleNodes ?? [];
     const hasStyleIncomingConnections = styleNodes.length > 0;
+    const hasCharacterOutgoingConnections = characterNodes.length > 0;
     const hasStyleOutgoingConnections =
       Boolean(projectGraph.story) || characterNodes.length > 0;
 
@@ -2645,20 +3424,48 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         saveMessage: 'Autosave',
       };
 
+      const characterPosition = resolveNodePosition(
+        character.positionX,
+        character.positionY,
+        {
+          x: 640,
+          y: 120 + index * 440,
+        },
+      );
+
+      const profile = parseCharacterProfile(character.profileJson);
+      const designOptions = parseCharacterDesignOptions(profile);
+      const selectedOptionId = resolveSelectedCharacterDesignId(
+        profile,
+        designOptions,
+      );
+      const defaultDesignMode = resolveDefaultCharacterDesignMode(
+        profile,
+        designOptions,
+      );
+      const designUi = characterDesignUiState[character.id] ?? {
+        mode: defaultDesignMode,
+        busy: false,
+        error: '',
+      };
+      const persistedDesignPosition =
+        profile?.characterDesignNodePosition &&
+        Number.isFinite(profile.characterDesignNodePosition.x) &&
+        Number.isFinite(profile.characterDesignNodePosition.y)
+          ? {
+              x: profile.characterDesignNodePosition.x,
+              y: profile.characterDesignNodePosition.y,
+            }
+          : null;
+
       nextNodes.push({
         id: `character-${character.id}`,
         type: 'characterCard',
-        position: resolveNodePosition(
-          character.positionX,
-          character.positionY,
-          {
-            x: 640,
-            y: 120 + index * 440,
-          },
-        ),
+        position: characterPosition,
         data: {
           characterId: character.id,
           hasIncomingConnection: hasStyleIncomingConnections,
+          hasOutgoingConnection: hasCharacterOutgoingConnections,
           name: draft.name,
           description: draft.description,
           traitsText: draft.traitsText,
@@ -2670,6 +3477,44 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             updateCharacterDraftField(character.id, 'description', value),
           onTraitsChange: (value: string) =>
             updateCharacterDraftField(character.id, 'traitsText', value),
+        },
+      });
+
+      nextNodes.push({
+        id: `character-design-${character.id}`,
+        type: 'characterDesign',
+        position: resolveNodePosition(
+          persistedDesignPosition?.x,
+          persistedDesignPosition?.y,
+          {
+            x: characterPosition.x + 760,
+            y: characterPosition.y,
+          },
+        ),
+        draggable: true,
+        deletable: false,
+        data: {
+          characterId: character.id,
+          characterName: draft.name || character.name,
+          hasIncomingConnection: true,
+          hasOutgoingConnection: false,
+          options: designOptions,
+          selectedOptionId,
+          mode: designUi.mode,
+          busy: designUi.busy,
+          error: designUi.error,
+          onRetry: () => {
+            void regenerateCharacterDesign(character.id);
+          },
+          onPick: (optionId: string) => {
+            void selectCharacterDesign(character.id, optionId);
+          },
+          onEdit: () => {
+            editCharacterDesignSelection(character.id);
+          },
+          onCancel: () => {
+            cancelCharacterDesignEdit(character.id);
+          },
         },
       });
     });
@@ -2768,7 +3613,12 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     storyImportStatus,
     storyMarkdownInput,
     characterDrafts,
+    characterDesignUiState,
     styleDrafts,
+    cancelCharacterDesignEdit,
+    editCharacterDesignSelection,
+    regenerateCharacterDesign,
+    selectCharacterDesign,
     updateCharacterDraftField,
     updateStyleDraftField,
   ]);

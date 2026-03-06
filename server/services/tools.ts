@@ -1,13 +1,18 @@
 import { GoogleGenAI, type GoogleGenAIOptions } from '@google/genai';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { prisma } from '../lib/db';
 import { env } from '../lib/env';
 import { z } from 'zod';
 import { allocateNodePositions } from './node-position';
+import type { AgentToolRuntimeEvent } from '../agents/types';
 
 type ToolContext = {
   userId: string;
   projectId?: string;
   args: Record<string, unknown>;
+  emitEvent?: (event: AgentToolRuntimeEvent) => void;
 };
 
 type StoryNodeSyncInput = {
@@ -25,6 +30,21 @@ type CharacterProfilePayload = {
   goals?: string;
   notes?: string;
   attributes?: Record<string, string>;
+  characterDesigns?: CharacterDesignOption[];
+  selectedCharacterDesignId?: string;
+  characterDesignPrompt?: string;
+  characterDesignNodePosition?: {
+    x: number;
+    y: number;
+  };
+  characterDesignGeneratedAt?: string;
+};
+
+type CharacterDesignOption = {
+  id: string;
+  imageUrl: string;
+  prompt: string;
+  createdAt: string;
 };
 
 type CharacterDraftInput = {
@@ -68,6 +88,11 @@ const CHARACTER_CANONICAL_KEYS = new Set([
   'personality',
   'goals',
   'notes',
+  'characterDesigns',
+  'selectedCharacterDesignId',
+  'characterDesignPrompt',
+  'characterDesignNodePosition',
+  'characterDesignGeneratedAt',
 ]);
 
 const NON_CHARACTER_ENTITY_WORDS = new Set([
@@ -204,6 +229,12 @@ const generatedCharactersPayloadSchema = z.object({
   characters: z.array(generatedCharacterSchema).min(1).max(12),
 });
 
+const characterDesignToolArgsSchema = z.object({
+  characterName: z.string().trim().min(1).max(120).optional(),
+  optionsCount: z.coerce.number().int().min(1).max(4).optional(),
+  replaceExisting: z.boolean().optional(),
+});
+
 const styleTextSchema = z.string().trim().max(8000);
 
 const styleExtrasSchema = z.record(z.string(), z.unknown());
@@ -239,14 +270,19 @@ const STYLE_DEFAULT_POSITION = {
   y: 120,
 } as const;
 
+const CHARACTER_DESIGN_PUBLIC_DIR = path.join(
+  process.cwd(),
+  'public',
+  'generated',
+  'character-designs',
+);
+const CHARACTER_DESIGN_PUBLIC_URL_PREFIX = '/generated/character-designs';
+
 const STORY_DEFAULT_POSITION = {
   x: 80,
   y: 120,
 } as const;
 
-const GRID_START_X = 80;
-const GRID_START_Y = 120;
-const GRID_STEP_X = 360;
 const GRID_STEP_Y = 220;
 const GRID_MAX_ROWS = 200;
 
@@ -434,6 +470,44 @@ function getGoogleGenAIOptions(): GoogleGenAIOptions {
 
 const characterDerivationAi = new GoogleGenAI(getGoogleGenAIOptions());
 
+type CharacterDesignStatusPhase = 'started' | 'completed';
+
+function emitRuntimeEvent(context: ToolContext, event: AgentToolRuntimeEvent) {
+  context.emitEvent?.(event);
+}
+
+function emitCharacterDesignStatusEvent(input: {
+  context: ToolContext;
+  phase: CharacterDesignStatusPhase;
+  message: string;
+  projectId: string;
+  mode: 'single' | 'all';
+  characterNodeIds: string[];
+  characterNames: string[];
+  successCount?: number;
+  failedCount?: number;
+  sourceTool?: string;
+}) {
+  emitRuntimeEvent(input.context, {
+    type: 'agent.status',
+    payload: {
+      phase: input.phase,
+      message: input.message,
+      projectId: input.projectId,
+      mode: input.mode,
+      characterNodeIds: input.characterNodeIds,
+      characterNames: input.characterNames,
+      ...(typeof input.successCount === 'number'
+        ? { successCount: input.successCount }
+        : {}),
+      ...(typeof input.failedCount === 'number'
+        ? { failedCount: input.failedCount }
+        : {}),
+      sourceTool: input.sourceTool ?? 'generate_character_design',
+    },
+  });
+}
+
 async function verifyProjectAccess(context: ToolContext) {
   if (!context.projectId) {
     return {
@@ -511,6 +585,191 @@ function formatValidationIssues(issues: z.ZodIssue[]) {
     const path = issue.path.length ? issue.path.join('.') : 'input';
     return `${path}: ${issue.message}`;
   });
+}
+
+function parseCharacterProfileRecord(raw: string | null | undefined) {
+  if (!raw) {
+    return {} as CharacterProfilePayload;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {} as CharacterProfilePayload;
+    }
+
+    return parsed as CharacterProfilePayload;
+  } catch {
+    return {} as CharacterProfilePayload;
+  }
+}
+
+function normalizeCharacterDesignOptions(raw: unknown) {
+  if (!Array.isArray(raw)) {
+    return [] as CharacterDesignOption[];
+  }
+
+  const normalized: CharacterDesignOption[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+
+    const record = item as Record<string, unknown>;
+    const id = normalizeStringValue(record.id);
+    const imageUrl =
+      normalizeStringValue(record.imageUrl) ||
+      normalizeStringValue(record.imageDataUrl);
+    const prompt = normalizeStringValue(record.prompt);
+    const createdAt = normalizeStringValue(record.createdAt);
+
+    if (!id || !imageUrl) {
+      continue;
+    }
+
+    normalized.push({
+      id,
+      imageUrl,
+      prompt,
+      createdAt: createdAt || new Date().toISOString(),
+    });
+  }
+
+  return normalized;
+}
+
+function toImageExtension(mimeType?: string) {
+  const normalizedMimeType = normalizeStringValue(mimeType).toLowerCase();
+  if (
+    normalizedMimeType === 'image/jpeg' ||
+    normalizedMimeType === 'image/jpg'
+  ) {
+    return 'jpg';
+  }
+
+  if (normalizedMimeType === 'image/webp') {
+    return 'webp';
+  }
+
+  return 'png';
+}
+
+async function saveCharacterDesignImageToPublicFolder(input: {
+  imageBytesBase64: string;
+  mimeType?: string;
+}) {
+  await mkdir(CHARACTER_DESIGN_PUBLIC_DIR, { recursive: true });
+
+  const extension = toImageExtension(input.mimeType);
+  const fileName = `design-${Date.now()}-${randomUUID()}.${extension}`;
+  const absoluteFilePath = path.join(CHARACTER_DESIGN_PUBLIC_DIR, fileName);
+  const binary = Buffer.from(input.imageBytesBase64, 'base64');
+
+  await writeFile(absoluteFilePath, binary);
+
+  return `${CHARACTER_DESIGN_PUBLIC_URL_PREFIX}/${fileName}`;
+}
+
+function buildCharacterDesignPrompt(input: {
+  characterName: string;
+  briefMarkdown: string;
+  profile: CharacterProfilePayload;
+  style: ProjectStylePayload;
+}) {
+  const characterSummary = [
+    input.profile.description,
+    input.profile.behavior,
+    input.profile.style,
+    input.profile.personality,
+    input.profile.goals,
+    input.profile.notes,
+  ]
+    .filter((value) => typeof value === 'string' && value.trim())
+    .join('\n');
+
+  return [
+    `Production character design sheet for ${input.characterName}.`,
+    'Output one complete character design sheet image (not a single portrait).',
+    'The sheet must include all of these sections clearly in one composition:',
+    '1) Full-body turnaround views: front, 3/4 front, side, 3/4 back, and back.',
+    '2) Expression/emotion variants: neutral, happy, angry, sad, surprised, determined.',
+    '3) Color palette swatches with labeled primary/secondary/accent colors and skin/hair/eye tones.',
+    '4) Costume and prop callouts with small detail insets.',
+    '5) Silhouette readability and proportions guide.',
+    'Render as clean concept art sheet with clear spacing, legible labels, and consistent style.',
+    'Avoid heavy background scenery; keep sheet-focused presentation on a clean studio backdrop.',
+    'Keep the same character identity across all views and variants.',
+    '',
+    'Character brief:',
+    characterSummary || input.briefMarkdown || 'No additional brief provided.',
+    '',
+    'Project style guide:',
+    `Writing style: ${input.style.writingStyle || 'Not specified.'}`,
+    `Character style: ${input.style.characterStyle || 'Not specified.'}`,
+    `Art style: ${input.style.artStyle || 'Not specified.'}`,
+    `Storytelling pacing: ${input.style.storytellingPacing || 'Not specified.'}`,
+    `Additional style dimensions: ${
+      Object.entries(input.style.extras)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('; ') || 'None.'
+    }`,
+  ].join('\n');
+}
+
+async function generateCharacterDesignOptions(input: {
+  prompt: string;
+  optionsCount: number;
+}) {
+  const response = await characterDerivationAi.models.generateImages({
+    model: env.GEMINI_CHARACTER_DESIGN_IMAGE_MODEL,
+    prompt: input.prompt,
+    config: {
+      numberOfImages: input.optionsCount,
+      aspectRatio: '1:1',
+      outputMimeType: 'image/png',
+    },
+  });
+
+  const generated = response.generatedImages ?? [];
+  const nowIso = new Date().toISOString();
+
+  const persistedOptions = await Promise.all(
+    generated.map(async (item, index) => {
+      const imageBytes = normalizeStringValue(item.image?.imageBytes);
+      if (!imageBytes) {
+        return null;
+      }
+
+      const imageUrl = await saveCharacterDesignImageToPublicFolder({
+        imageBytesBase64: imageBytes,
+        mimeType: item.image?.mimeType,
+      });
+
+      return {
+        id: `design-${Date.now()}-${index}`,
+        imageUrl,
+        prompt: input.prompt,
+        createdAt: nowIso,
+      } satisfies CharacterDesignOption;
+    }),
+  );
+
+  return persistedOptions.filter((item): item is CharacterDesignOption =>
+    Boolean(item),
+  );
+}
+
+function mergeCharacterDesignOptions(input: {
+  current: CharacterDesignOption[];
+  generated: CharacterDesignOption[];
+  replaceExisting: boolean;
+}) {
+  if (input.replaceExisting) {
+    return input.generated;
+  }
+
+  return [...input.current, ...input.generated];
 }
 
 function parseCharacterDraft(raw: unknown): CharacterDraftInput | null {
@@ -2164,6 +2423,482 @@ export async function refineProjectStyleNodeTool(context: ToolContext) {
     updateMode: mode,
     styleNode: updated,
     styleProfile: next,
+  };
+}
+
+async function generateCharacterDesignForNode(input: {
+  characterNode: {
+    id: string;
+    name: string;
+    briefMarkdown: string;
+    profileJson: string | null;
+  };
+  style: ProjectStylePayload;
+  optionsCount: number;
+  replaceExisting: boolean;
+}) {
+  const profile = parseCharacterProfileRecord(input.characterNode.profileJson);
+  const prompt = buildCharacterDesignPrompt({
+    characterName: input.characterNode.name,
+    briefMarkdown: input.characterNode.briefMarkdown,
+    profile,
+    style: input.style,
+  });
+
+  const generated = await generateCharacterDesignOptions({
+    prompt,
+    optionsCount: input.optionsCount,
+  });
+
+  if (!generated.length) {
+    return {
+      ok: false as const,
+      message: `No image options were generated for ${input.characterNode.name}.`,
+    };
+  }
+
+  const existingOptions = normalizeCharacterDesignOptions(
+    profile.characterDesigns,
+  );
+  const mergedOptions = mergeCharacterDesignOptions({
+    current: existingOptions,
+    generated,
+    replaceExisting: input.replaceExisting,
+  });
+
+  const selectedCharacterDesignId = normalizeStringValue(
+    profile.selectedCharacterDesignId,
+  );
+  const nextSelectedId =
+    selectedCharacterDesignId &&
+    mergedOptions.some((option) => option.id === selectedCharacterDesignId)
+      ? selectedCharacterDesignId
+      : generated[0]?.id || null;
+
+  const nextProfile: CharacterProfilePayload = {
+    ...profile,
+    headImageUrl:
+      mergedOptions.find((option) => option.id === nextSelectedId)?.imageUrl ||
+      profile.headImageUrl,
+    characterDesigns: mergedOptions,
+    selectedCharacterDesignId: nextSelectedId || undefined,
+    characterDesignPrompt: prompt,
+    characterDesignGeneratedAt: new Date().toISOString(),
+  };
+
+  const updated = await prisma.characterNode.update({
+    where: {
+      id: input.characterNode.id,
+    },
+    data: {
+      profileJson: JSON.stringify(nextProfile),
+    },
+    select: {
+      id: true,
+      name: true,
+      briefMarkdown: true,
+      profileJson: true,
+      positionX: true,
+      positionY: true,
+      updatedAt: true,
+    },
+  });
+
+  return {
+    ok: true as const,
+    message: `Generated ${generated.length} design option(s) for ${updated.name}.`,
+    node: updated,
+    generatedCount: generated.length,
+    selectedCharacterDesignId: nextSelectedId,
+  };
+}
+
+export async function regenerateCharacterDesignOptionsForUser(input: {
+  userId: string;
+  projectId: string;
+  characterNodeId: string;
+  optionsCount?: number;
+}) {
+  const project = await prisma.project.findFirst({
+    where: {
+      id: input.projectId,
+      userId: input.userId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!project) {
+    return {
+      ok: false as const,
+      message: 'Project not found for this user.',
+    };
+  }
+
+  const node = await prisma.characterNode.findFirst({
+    where: {
+      id: input.characterNodeId,
+      projectId: input.projectId,
+    },
+    select: {
+      id: true,
+      name: true,
+      briefMarkdown: true,
+      profileJson: true,
+    },
+  });
+
+  if (!node) {
+    return {
+      ok: false as const,
+      message: 'Character node not found in this project.',
+    };
+  }
+
+  const styleNode = await prisma.styleNode.findFirst({
+    where: {
+      projectId: input.projectId,
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  });
+
+  const style = styleNode
+    ? toProjectStylePayload(styleNode)
+    : {
+        writingStyle: '',
+        characterStyle: '',
+        artStyle: '',
+        storytellingPacing: '',
+        extras: {},
+      };
+
+  return generateCharacterDesignForNode({
+    characterNode: node,
+    style,
+    optionsCount: input.optionsCount ?? 3,
+    replaceExisting: true,
+  });
+}
+
+export async function selectCharacterDesignOptionForUser(input: {
+  userId: string;
+  projectId: string;
+  characterNodeId: string;
+  optionId: string;
+}) {
+  const node = await prisma.characterNode.findFirst({
+    where: {
+      id: input.characterNodeId,
+      projectId: input.projectId,
+      project: {
+        userId: input.userId,
+      },
+    },
+    select: {
+      id: true,
+      profileJson: true,
+    },
+  });
+
+  if (!node) {
+    return {
+      ok: false as const,
+      message: 'Character node not found in this project.',
+    };
+  }
+
+  const profile = parseCharacterProfileRecord(node.profileJson);
+  const options = normalizeCharacterDesignOptions(profile.characterDesigns);
+  const selected = options.find((item) => item.id === input.optionId);
+
+  if (!selected) {
+    return {
+      ok: false as const,
+      message: 'Requested design option does not exist for this character.',
+    };
+  }
+
+  const nextProfile: CharacterProfilePayload = {
+    ...profile,
+    selectedCharacterDesignId: selected.id,
+    headImageUrl: selected.imageUrl,
+  };
+
+  const updated = await prisma.characterNode.update({
+    where: {
+      id: node.id,
+    },
+    data: {
+      profileJson: JSON.stringify(nextProfile),
+    },
+    select: {
+      id: true,
+      name: true,
+      briefMarkdown: true,
+      profileJson: true,
+      positionX: true,
+      positionY: true,
+      updatedAt: true,
+    },
+  });
+
+  return {
+    ok: true as const,
+    message: 'Character design selection updated.',
+    node: updated,
+  };
+}
+
+export async function updateCharacterDesignNodePositionForUser(input: {
+  userId: string;
+  projectId: string;
+  characterNodeId: string;
+  positionX: number;
+  positionY: number;
+}) {
+  const node = await prisma.characterNode.findFirst({
+    where: {
+      id: input.characterNodeId,
+      projectId: input.projectId,
+      project: {
+        userId: input.userId,
+      },
+    },
+    select: {
+      id: true,
+      profileJson: true,
+    },
+  });
+
+  if (!node) {
+    return {
+      ok: false as const,
+      message: 'Character node not found in this project.',
+    };
+  }
+
+  const profile = parseCharacterProfileRecord(node.profileJson);
+  const nextProfile: CharacterProfilePayload = {
+    ...profile,
+    characterDesignNodePosition: {
+      x: input.positionX,
+      y: input.positionY,
+    },
+  };
+
+  await prisma.characterNode.update({
+    where: {
+      id: node.id,
+    },
+    data: {
+      profileJson: JSON.stringify(nextProfile),
+    },
+  });
+
+  return {
+    ok: true as const,
+    positionX: input.positionX,
+    positionY: input.positionY,
+  };
+}
+
+export async function generateCharacterDesignTool(context: ToolContext) {
+  const projectAccess = await verifyProjectAccess(context);
+  if (!projectAccess.ok) {
+    return projectAccess;
+  }
+
+  const parsed = characterDesignToolArgsSchema.safeParse(context.args);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: 'Invalid payload for generate_character_design.',
+      issues: formatValidationIssues(parsed.error.issues),
+    };
+  }
+
+  const projectId = context.projectId;
+  if (!projectId) {
+    return {
+      ok: false,
+      message: 'Active project was not found for this user.',
+    };
+  }
+
+  const styleCanonical = await ensureCanonicalStyleNode(context);
+  if (!styleCanonical.ok) {
+    return styleCanonical;
+  }
+
+  const optionsCount = parsed.data.optionsCount ?? 3;
+  const replaceExisting = parsed.data.replaceExisting ?? true;
+
+  const allCharacters = await prisma.characterNode.findMany({
+    where: {
+      projectId,
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+    select: {
+      id: true,
+      name: true,
+      briefMarkdown: true,
+      profileJson: true,
+    },
+  });
+
+  if (!allCharacters.length) {
+    return {
+      ok: false,
+      message:
+        'No character nodes are available in the active project. Create/import characters first, then generate designs.',
+    };
+  }
+
+  const requestedName = normalizeStringValue(parsed.data.characterName);
+  const targets = requestedName
+    ? allCharacters.filter(
+        (item) =>
+          item.name.trim().toLowerCase() === requestedName.toLowerCase(),
+      )
+    : allCharacters;
+
+  if (requestedName && !targets.length) {
+    return {
+      ok: false,
+      message: `Character "${requestedName}" was not found in the active project.`,
+    };
+  }
+
+  const mode = requestedName ? ('single' as const) : ('all' as const);
+  const characterNodeIds = targets.map((target) => target.id);
+  const characterNames = targets.map((target) => target.name);
+  const modeLabel = requestedName
+    ? `for ${requestedName}`
+    : 'for all characters';
+
+  emitCharacterDesignStatusEvent({
+    context,
+    phase: 'started',
+    message: `Generating character designs ${modeLabel}.`,
+    projectId,
+    mode,
+    characterNodeIds,
+    characterNames,
+  });
+
+  void Promise.resolve()
+    .then(async () => {
+      const results: Array<{
+        characterNodeId: string;
+        characterName: string;
+        ok: boolean;
+        message: string;
+        generatedCount?: number;
+        selectedCharacterDesignId?: string | null;
+      }> = [];
+
+      for (const target of targets) {
+        try {
+          const generated = await generateCharacterDesignForNode({
+            characterNode: target,
+            style: styleCanonical.style,
+            optionsCount,
+            replaceExisting,
+          });
+
+          if (!generated.ok) {
+            results.push({
+              characterNodeId: target.id,
+              characterName: target.name,
+              ok: false,
+              message: generated.message,
+            });
+            continue;
+          }
+
+          results.push({
+            characterNodeId: target.id,
+            characterName: target.name,
+            ok: true,
+            message: generated.message,
+            generatedCount: generated.generatedCount,
+            selectedCharacterDesignId: generated.selectedCharacterDesignId,
+          });
+        } catch (error) {
+          results.push({
+            characterNodeId: target.id,
+            characterName: target.name,
+            ok: false,
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Character design generation failed.',
+          });
+        }
+      }
+
+      const successCount = results.filter((item) => item.ok).length;
+      const failedCount = results.length - successCount;
+
+      const completionMessage =
+        failedCount === 0
+          ? `Character design generation finished ${modeLabel}.`
+          : `Character design generation finished with ${successCount} success and ${failedCount} failure(s) ${modeLabel}.`;
+
+      emitCharacterDesignStatusEvent({
+        context,
+        phase: 'completed',
+        message: completionMessage,
+        projectId,
+        mode,
+        characterNodeIds,
+        characterNames,
+        successCount,
+        failedCount,
+      });
+
+      emitRuntimeEvent(context, {
+        type: 'agent.project.changed',
+        payload: {
+          projectId,
+          sourceTool: 'generate_character_design',
+        },
+      });
+    })
+    .catch((error) => {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Character design generation failed unexpectedly.';
+
+      emitCharacterDesignStatusEvent({
+        context,
+        phase: 'completed',
+        message: `Character design generation failed ${modeLabel}: ${errorMessage}`,
+        projectId,
+        mode,
+        characterNodeIds,
+        characterNames,
+        successCount: 0,
+        failedCount: characterNodeIds.length,
+      });
+    });
+
+  return {
+    ok: true,
+    deferred: true,
+    message: `Generating character designs ${modeLabel}. I will confirm once it's done.`,
+    mode,
+    optionsCount,
+    replaceExisting,
+    characterNodeIds,
+    characterNames,
+    startedAt: new Date().toISOString(),
   };
 }
 
