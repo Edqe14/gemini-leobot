@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Background,
   Controls,
@@ -8,7 +8,7 @@ import {
   useEdgesState,
   useNodesState,
 } from '@xyflow/react';
-import { Mic, MicOff, User } from 'lucide-react';
+import { Captions, CaptionsOff, Mic, MicOff, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AuthGate } from '@/components/auth-gate';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +31,67 @@ type AudioChunk = {
 };
 
 type VoiceState = 'idle' | 'active';
+
+type CaptionSpeaker = 'You' | 'Leo';
+
+type CaptionLine = {
+  speaker: CaptionSpeaker;
+  text: string;
+};
+
+function mergeCaptionText(previous: string, incoming: string): string {
+  const prev = previous.trim();
+  const next = incoming.trim();
+
+  if (!next) {
+    return prev;
+  }
+
+  if (!prev) {
+    return next;
+  }
+
+  if (next === prev || prev.endsWith(` ${next}`)) {
+    return prev;
+  }
+
+  if (next.startsWith(prev) || prev.startsWith(next)) {
+    return next;
+  }
+
+  if (/^[.,!?;:]+$/.test(next)) {
+    return `${prev}${next}`;
+  }
+
+  return `${prev} ${next}`;
+}
+
+function updateCaptionLines(
+  current: CaptionLine[],
+  speaker: CaptionSpeaker,
+  text: string,
+): CaptionLine[] {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return current;
+  }
+
+  const next = [...current];
+  const last = next[next.length - 1];
+
+  if (!last || last.speaker !== speaker) {
+    next.push({ speaker, text: trimmed });
+    return next.slice(-12);
+  }
+
+  const merged = mergeCaptionText(last.text, trimmed);
+  if (merged === last.text) {
+    return next;
+  }
+
+  next[next.length - 1] = { speaker, text: merged };
+  return next.slice(-12);
+}
 
 function extractAudioChunks(payload: unknown): AudioChunk[] {
   const chunks: AudioChunk[] = [];
@@ -83,6 +144,27 @@ function extractOutputTranscription(payload: unknown): string | null {
   }
 
   const text = (outputTranscription as Record<string, unknown>).text;
+  return typeof text === 'string' && text.trim() ? text.trim() : null;
+}
+
+function extractInputTranscription(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const serverContent = record.serverContent;
+  if (!serverContent || typeof serverContent !== 'object') {
+    return null;
+  }
+
+  const contentRecord = serverContent as Record<string, unknown>;
+  const inputTranscription = contentRecord.inputTranscription;
+  if (!inputTranscription || typeof inputTranscription !== 'object') {
+    return null;
+  }
+
+  const text = (inputTranscription as Record<string, unknown>).text;
   return typeof text === 'string' && text.trim() ? text.trim() : null;
 }
 
@@ -191,7 +273,9 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [debugOverlayEnabled, setDebugOverlayEnabled] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [loopbackEnabled, setLoopbackEnabled] = useState(false);
-  const [outputTranscription, setOutputTranscription] = useState('');
+  const [ccEnabled, setCcEnabled] = useState(true);
+  const [captionLines, setCaptionLines] = useState<CaptionLine[]>([]);
+  const [showInterruptedBadge, setShowInterruptedBadge] = useState(false);
   const [projectName, setProjectName] = useState<string>('No active project');
   const socketClientRef = useRef<ReturnType<typeof createAgentSocket> | null>(
     null,
@@ -204,6 +288,45 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const loopbackGainNodeRef = useRef<GainNode | null>(null);
   const playbackContextRef = useRef<AudioContext | null>(null);
   const playbackCursorRef = useRef(0);
+  const playbackSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const interruptedBadgeTimerRef = useRef<number | null>(null);
+
+  const interruptPlayback = useCallback(() => {
+    const activeSources = playbackSourcesRef.current;
+    let didInterrupt = false;
+
+    if (activeSources.size > 0) {
+      didInterrupt = true;
+      for (const source of activeSources) {
+        try {
+          source.stop();
+        } catch {
+          // no-op
+        }
+        source.disconnect();
+      }
+      activeSources.clear();
+    }
+
+    const playbackContext = playbackContextRef.current;
+    if (playbackContext) {
+      playbackCursorRef.current = playbackContext.currentTime;
+    }
+
+    return didInterrupt;
+  }, []);
+
+  const notifyInterrupted = useCallback(() => {
+    setShowInterruptedBadge(true);
+    if (interruptedBadgeTimerRef.current) {
+      window.clearTimeout(interruptedBadgeTimerRef.current);
+    }
+
+    interruptedBadgeTimerRef.current = window.setTimeout(() => {
+      setShowInterruptedBadge(false);
+      interruptedBadgeTimerRef.current = null;
+    }, 1200);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -293,6 +416,12 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             | undefined;
           if (payload?.state) {
             setVoiceState(payload.state);
+            if (payload.state === 'active') {
+              const didInterrupt = interruptPlayback();
+              if (didInterrupt) {
+                notifyInterrupted();
+              }
+            }
           }
           return;
         }
@@ -302,11 +431,24 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           const nextVoiceState = extractVoiceState(payload);
           if (nextVoiceState) {
             setVoiceState(nextVoiceState);
+            if (nextVoiceState === 'active') {
+              const didInterrupt = interruptPlayback();
+              if (didInterrupt) {
+                notifyInterrupted();
+              }
+            }
+          }
+
+          const input = extractInputTranscription(payload);
+          if (input) {
+            setCaptionLines((value) => updateCaptionLines(value, 'You', input));
           }
 
           const transcription = extractOutputTranscription(payload);
           if (transcription) {
-            setOutputTranscription(transcription);
+            setCaptionLines((value) =>
+              updateCaptionLines(value, 'Leo', transcription),
+            );
           }
 
           const chunks = extractAudioChunks(payload);
@@ -344,6 +486,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             const source = playbackContext.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(playbackContext.destination);
+            playbackSourcesRef.current.add(source);
+            source.onended = () => {
+              source.disconnect();
+              playbackSourcesRef.current.delete(source);
+            };
 
             const startAt = Math.max(
               playbackContext.currentTime,
@@ -379,10 +526,17 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       void playbackContextRef.current?.close();
       playbackContextRef.current = null;
       playbackCursorRef.current = 0;
-    };
-  }, []);
 
-  const stopMicCapture = () => {
+      if (interruptedBadgeTimerRef.current) {
+        window.clearTimeout(interruptedBadgeTimerRef.current);
+        interruptedBadgeTimerRef.current = null;
+      }
+    };
+  }, [interruptPlayback, notifyInterrupted]);
+
+  const stopMicCapture = useCallback(() => {
+    interruptPlayback();
+
     socketClientRef.current?.send({
       type: 'gemini.realtimeEnd',
       payload: { reason: 'mic_stopped' },
@@ -403,7 +557,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     audioContextRef.current = null;
     mediaStreamRef.current = null;
     setMicActive(false);
-  };
+  }, [interruptPlayback]);
 
   const bytesToBase64 = (bytes: Uint8Array) => {
     let binary = '';
@@ -576,7 +730,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       stopMicCapture();
       setMicError('Voice socket disconnected.');
     }
-  }, [connected, micActive]);
+  }, [connected, micActive, stopMicCapture]);
 
   return (
     <div className='h-screen w-screen bg-background p-6 text-foreground'>
@@ -611,15 +765,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
               </label>
             </div>
           ) : null}
-
-          {debugOverlayEnabled && outputTranscription ? (
-            <Card className='mt-2 max-w-sm border border-border bg-card/95 p-3'>
-              <p className='text-xs font-medium'>Live transcription</p>
-              <p className='mt-1 text-xs text-muted-foreground'>
-                {outputTranscription}
-              </p>
-            </Card>
-          ) : null}
         </div>
 
         <ReactFlow
@@ -634,18 +779,54 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           <Background gap={24} size={1} />
         </ReactFlow>
 
-        <div className='absolute bottom-6 left-1/2 z-10 -translate-x-1/2'>
-          <Button
-            variant={micActive ? 'default' : 'outline'}
-            className='min-w-28 rounded-2xl'
-            onClick={() => void toggleMic()}>
-            {micActive ? (
-              <Mic className='mr-2 h-4 w-4' />
-            ) : (
-              <MicOff className='mr-2 h-4 w-4' />
-            )}
-            Mic
-          </Button>
+        <div className='absolute bottom-6 left-1/2 z-10 w-full max-w-xl -translate-x-1/2 px-6'>
+          {ccEnabled && captionLines.length > 0 ? (
+            <Card className='mb-3 border border-border bg-card/95 p-3'>
+              <div className='space-y-1 text-xs'>
+                {captionLines.map((line, index) => (
+                  <p
+                    key={`${line.speaker}-${index}-${line.text}`}
+                    className='text-muted-foreground'>
+                    <span className='font-medium text-foreground'>
+                      {line.speaker}:
+                    </span>{' '}
+                    {line.text}
+                  </p>
+                ))}
+              </div>
+            </Card>
+          ) : null}
+
+          <div className='flex items-center justify-center gap-2'>
+            <Button
+              variant={ccEnabled ? 'default' : 'outline'}
+              className='rounded-2xl'
+              onClick={() => setCcEnabled((value) => !value)}>
+              {ccEnabled ? (
+                <Captions className='mr-2 h-4 w-4' />
+              ) : (
+                <CaptionsOff className='mr-2 h-4 w-4' />
+              )}
+              CC
+            </Button>
+
+            <Button
+              variant={micActive ? 'default' : 'outline'}
+              className='min-w-28 rounded-2xl'
+              onClick={() => void toggleMic()}>
+              {micActive ? (
+                <Mic className='mr-2 h-4 w-4' />
+              ) : (
+                <MicOff className='mr-2 h-4 w-4' />
+              )}
+              Mic
+            </Button>
+          </div>
+          {showInterruptedBadge ? (
+            <div className='mt-1 flex justify-center'>
+              <Badge variant='outline'>Leo interrupted</Badge>
+            </div>
+          ) : null}
           <p className='mt-1 text-center text-xs text-muted-foreground'>
             {socketStatus}
           </p>

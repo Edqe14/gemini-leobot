@@ -106,7 +106,7 @@ Create OAuth credentials in Google Cloud Console and set:
 
 Client -> Server:
 
-- `{ type: "agent.context", payload: { projectId } }`
+- `{ type: "agent.context", payload: { projectId, activeSubAgents?, purpose? } }`
 - `{ type: "gemini.clientContent", payload: { turns, turnComplete } }`
 - `{ type: "gemini.realtimeInput", payload: { media: { mimeType, data } } }`
 
@@ -117,6 +117,7 @@ Server -> Client:
 - `gemini.error`
 - `gemini.closed`
 - `agent.context.updated`
+- `agent.session.rotated`
 
 ## Notes
 

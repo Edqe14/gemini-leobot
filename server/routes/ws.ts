@@ -22,7 +22,14 @@ type ClientMessage =
       payload: { media: { mimeType: string; data: string } };
     }
   | { type: 'gemini.realtimeEnd'; payload?: { reason?: string } }
-  | { type: 'agent.context'; payload: { projectId?: string } };
+  | {
+      type: 'agent.context';
+      payload: {
+        projectId?: string;
+        activeSubAgents?: string[];
+        purpose?: string;
+      };
+    };
 
 type RealtimeAudioChunk = {
   media: {
@@ -33,6 +40,47 @@ type RealtimeAudioChunk = {
 };
 
 const MAX_AUDIO_QUEUE_SIZE = 240;
+
+function normalizeAgentName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+function sanitizeActiveSubAgents(input?: string[]) {
+  if (!Array.isArray(input)) {
+    return [] as string[];
+  }
+
+  const unique = new Set<string>();
+  for (const value of input) {
+    if (typeof value !== 'string') {
+      continue;
+    }
+
+    const normalized = normalizeAgentName(value);
+    if (!normalized) {
+      continue;
+    }
+
+    unique.add(normalized);
+    if (unique.size >= 8) {
+      break;
+    }
+  }
+
+  return [...unique];
+}
+
+function createAgentContextKey(input: {
+  projectId?: string;
+  activeSubAgents?: string[];
+  purpose?: string;
+}) {
+  return JSON.stringify({
+    projectId: input.projectId?.trim() || null,
+    activeSubAgents: sanitizeActiveSubAgents(input.activeSubAgents),
+    purpose: input.purpose?.trim() || null,
+  });
+}
 
 export function registerWs(app: Hono) {
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -61,6 +109,9 @@ export function registerWs(app: Hono) {
       }
 
       let projectId = c.req.query('projectId');
+      let activeSubAgents: string[] = [];
+      let purpose: string | undefined;
+      let agentContextKey = createAgentContextKey({ projectId });
       let geminiBridge: Awaited<
         ReturnType<typeof connectGeminiLiveBridge>
       > | null = null;
@@ -149,6 +200,54 @@ export function registerWs(app: Hono) {
         }
       };
 
+      const connectGeminiForCurrentContext = async (
+        ws: WSContext<WebSocket>,
+      ) => {
+        geminiBridge = await connectGeminiLiveBridge({
+          ws,
+          userId: session.user.id,
+          projectId,
+          activeSubAgents,
+          purpose,
+          debugSessionId,
+        });
+
+        await drainRealtimeQueue(ws);
+      };
+
+      const rotateGeminiSessionForContext = async (
+        ws: WSContext<WebSocket>,
+        reason: string,
+      ) => {
+        if (drainingQueue) {
+          await drainRealtimeQueue(ws);
+        }
+
+        geminiBridge?.close();
+        geminiBridge = null;
+
+        await connectGeminiForCurrentContext(ws);
+
+        ws.send(
+          JSON.stringify({
+            type: 'agent.session.rotated',
+            payload: {
+              reason,
+              projectId,
+              activeSubAgents,
+              purpose,
+            },
+          }),
+        );
+
+        recordActionSent(debugSessionId, 'agent.session.rotated', {
+          reason,
+          projectId,
+          activeSubAgents,
+          purpose,
+        });
+      };
+
       return {
         async onOpen(_event, ws) {
           debugSessionId = createDebugSession({
@@ -157,12 +256,7 @@ export function registerWs(app: Hono) {
           });
 
           try {
-            geminiBridge = await connectGeminiLiveBridge({
-              ws,
-              userId: session.user.id,
-              projectId,
-              debugSessionId,
-            });
+            await connectGeminiForCurrentContext(ws);
           } catch (error) {
             const message =
               error instanceof Error
@@ -181,8 +275,6 @@ export function registerWs(app: Hono) {
             ws.close(1011, 'Gemini bridge init failed');
             return;
           }
-
-          await drainRealtimeQueue(ws);
 
           ws.send(JSON.stringify({ type: 'ws.ready' }));
           recordActionSent(debugSessionId, 'ws.ready');
@@ -209,17 +301,71 @@ export function registerWs(app: Hono) {
           recordActionReceived(debugSessionId, msg.type, msg.payload);
 
           if (msg.type === 'agent.context') {
-            projectId = msg.payload.projectId;
+            const nextProjectId = msg.payload.projectId;
+            const nextActiveSubAgents = sanitizeActiveSubAgents(
+              msg.payload.activeSubAgents,
+            );
+            const nextPurpose = msg.payload.purpose?.trim() || undefined;
+
+            const nextAgentContextKey = createAgentContextKey({
+              projectId: nextProjectId,
+              activeSubAgents: nextActiveSubAgents,
+              purpose: nextPurpose,
+            });
+
+            projectId = nextProjectId;
+            activeSubAgents = nextActiveSubAgents;
+            purpose = nextPurpose;
+
             updateDebugSession(debugSessionId, { projectId });
+
+            const contextChanged = nextAgentContextKey !== agentContextKey;
+            agentContextKey = nextAgentContextKey;
+
             ws.send(
               JSON.stringify({
                 type: 'agent.context.updated',
-                payload: { projectId },
+                payload: {
+                  projectId,
+                  activeSubAgents,
+                  purpose,
+                  contextChanged,
+                },
               }),
             );
             recordActionSent(debugSessionId, 'agent.context.updated', {
               projectId,
+              activeSubAgents,
+              purpose,
+              contextChanged,
             });
+
+            if (contextChanged) {
+              void (async () => {
+                try {
+                  await rotateGeminiSessionForContext(
+                    ws,
+                    'agent_context_changed',
+                  );
+                } catch (error) {
+                  const message =
+                    error instanceof Error
+                      ? error.message
+                      : 'Failed to rotate Gemini live session';
+
+                  ws.send(
+                    JSON.stringify({
+                      type: 'error',
+                      payload: message,
+                    }),
+                  );
+                  recordActionSent(debugSessionId, 'error', {
+                    payload: message,
+                  });
+                }
+              })();
+            }
+
             return;
           }
 

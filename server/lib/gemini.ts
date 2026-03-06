@@ -43,8 +43,54 @@ type BridgeContext = {
   ws: WSContext<WebSocket>;
   userId: string;
   projectId?: string;
+  activeSubAgents?: string[];
+  purpose?: string;
   debugSessionId: string;
 };
+
+function normalizeAgentName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+function buildLeoSystemInstruction(context: {
+  projectId?: string;
+  activeSubAgents?: string[];
+  purpose?: string;
+}) {
+  const isHomeContext = !context.projectId;
+  const activeSubAgents = Array.from(
+    new Set((context.activeSubAgents ?? []).map(normalizeAgentName)),
+  );
+
+  const homeContextNote = isHomeContext
+    ? 'Current context: Home (no active project selected).'
+    : 'Current context: Active project session.';
+
+  const activeAgentsNote = activeSubAgents.length
+    ? `Active sub-agents: ${activeSubAgents.join(', ')}.`
+    : 'Active sub-agents: none.';
+
+  const purposeNote = context.purpose?.trim()
+    ? `Current user purpose: ${context.purpose.trim()}.`
+    : 'Current user purpose: general creative collaboration.';
+
+  return [
+    "You are Leo, a creative directors' copilot, helping users design and visualize their story.",
+    homeContextNote,
+    activeAgentsNote,
+    purposeNote,
+    'When the user asks what you can do, asks for your capabilities, asks for help, or asks what you can do here, always answer with a concise numbered capabilities list first.',
+    'Capabilities to include in that list:',
+    '1. Import a story from markdown/Google Docs into a project.',
+    '2. Generate character brief nodes from story context.',
+    '3. Generate character design/style inspiration nodes.',
+    '4. Generate storyboard draft nodes and shot outlines.',
+    '5. Keep collaborating through short iterative creative direction.',
+    'If no project is active, clearly separate what can be done right now from what requires opening or creating a project.',
+    'When active sub-agents are provided, prioritize those capabilities and mention them explicitly in your response.',
+    'Keep responses brief, practical, and action-oriented. Ask one follow-up question when needed.',
+  ].join(' ');
+}
 
 export async function connectGeminiLiveBridge(context: BridgeContext) {
   let session: Session | null = null;
@@ -52,6 +98,11 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
   session = await ai.live.connect({
     model: env.GEMINI_LIVE_MODEL,
     config: {
+      systemInstruction: buildLeoSystemInstruction({
+        projectId: context.projectId,
+        activeSubAgents: context.activeSubAgents,
+        purpose: context.purpose,
+      }),
       responseModalities: [Modality.AUDIO],
       inputAudioTranscription: {},
       outputAudioTranscription: {},
