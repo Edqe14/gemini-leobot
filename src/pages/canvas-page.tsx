@@ -50,6 +50,8 @@ type CaptionLine = {
   text: string;
 };
 
+const MIC_PROCESSOR_BUFFER_SIZE = 1024;
+
 type StoryRecord = {
   id: string;
   title: string;
@@ -1819,6 +1821,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [micActive, setMicActive] = useState(false);
   const [micError, setMicError] = useState('');
   const [connected, setConnected] = useState(false);
+  const [socketReady, setSocketReady] = useState(false);
   const [socketStatus, setSocketStatus] = useState(
     'connecting voice socket...',
   );
@@ -2258,11 +2261,13 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       projectId: initialProjectIdRef.current || undefined,
       onOpen: () => {
         setConnected(true);
-        setSocketStatus('voice socket connected');
+        setSocketReady(false);
+        setSocketStatus('voice socket connected, preparing session...');
         setVoiceState('idle');
       },
       onClose: () => {
         setConnected(false);
+        setSocketReady(false);
         setSocketStatus('voice socket disconnected, retrying...');
         setVoiceState('idle');
       },
@@ -2288,6 +2293,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         }
 
         if (message.type === 'ws.ready') {
+          setSocketReady(true);
           setSocketStatus('voice socket ready');
           return;
         }
@@ -3007,6 +3013,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           throw new Error('Voice socket is not connected yet.');
         }
 
+        if (!socketReady) {
+          throw new Error('Voice session is still preparing. Try again now.');
+        }
+
         if (!navigator.mediaDevices?.getUserMedia) {
           throw new Error(
             'Microphone capture is not supported in this browser.',
@@ -3036,7 +3046,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         await audioContext.resume();
 
         const source = audioContext.createMediaStreamSource(stream);
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        const processor = audioContext.createScriptProcessor(
+          MIC_PROCESSOR_BUFFER_SIZE,
+          1,
+          1,
+        );
         const sinkGain = audioContext.createGain();
         const loopbackGain = audioContext.createGain();
         sinkGain.gain.value = 0;
@@ -3090,7 +3104,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         micStartingRef.current = false;
       }
     },
-    [connected, loopbackEnabled, stopMicCapture],
+    [connected, loopbackEnabled, socketReady, stopMicCapture],
   );
 
   useEffect(() => {
@@ -3117,8 +3131,8 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       return;
     }
 
-    if (!connected) {
-      setMicError('Voice socket is not connected yet.');
+    if (!connected || !socketReady) {
+      setMicError('Voice session is not ready yet.');
       return;
     }
 
@@ -3139,7 +3153,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
     setDebugTextInput('');
     setMicError('');
-  }, [connected, debugTextInput]);
+  }, [connected, debugTextInput, socketReady]);
 
   useEffect(() => {
     const projectId = activeProjectId.trim();
@@ -5006,7 +5020,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
               <Button
                 variant='outline'
                 className='h-9 rounded-md'
-                disabled={!debugTextInput.trim() || !connected}
+                disabled={!debugTextInput.trim() || !connected || !socketReady}
                 onClick={sendDebugTextInput}>
                 Send
               </Button>

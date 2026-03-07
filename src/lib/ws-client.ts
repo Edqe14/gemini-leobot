@@ -16,6 +16,22 @@ export function createAgentSocket(options: {
   let socket: WebSocket | null = null;
   let shouldReconnect = true;
   let reconnectTimer: number | null = null;
+  let reconnectAttempts = 0;
+
+  const RECONNECT_INITIAL_DELAY_MS = 250;
+  const RECONNECT_MAX_DELAY_MS = 2000;
+
+  const scheduleReconnect = () => {
+    const delay = Math.min(
+      RECONNECT_INITIAL_DELAY_MS * 2 ** reconnectAttempts,
+      RECONNECT_MAX_DELAY_MS,
+    );
+    reconnectAttempts += 1;
+
+    reconnectTimer = window.setTimeout(() => {
+      connect();
+    }, delay);
+  };
 
   const connect = () => {
     if (!shouldReconnect) {
@@ -31,6 +47,7 @@ export function createAgentSocket(options: {
       socket = new WebSocket(url);
 
       socket.addEventListener('open', () => {
+        reconnectAttempts = 0;
         options.onOpen?.();
       });
 
@@ -46,9 +63,7 @@ export function createAgentSocket(options: {
           return;
         }
 
-        reconnectTimer = window.setTimeout(() => {
-          connect();
-        }, 1500);
+        scheduleReconnect();
       });
 
       socket.addEventListener('message', (event) => {
@@ -64,9 +79,7 @@ export function createAgentSocket(options: {
       });
     } catch {
       options.onClose?.();
-      reconnectTimer = window.setTimeout(() => {
-        connect();
-      }, 1500);
+      scheduleReconnect();
     }
   };
 

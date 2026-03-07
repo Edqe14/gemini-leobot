@@ -47,6 +47,18 @@ const envSchema = z
     GOOGLE_CLOUD_PROJECT: z.string().min(1).optional(),
     GOOGLE_CLOUD_LOCATION: z.string().min(1).optional(),
     GEMINI_LIVE_MODEL: z.string().default('gemini-live-2.5-flash-preview'),
+    GEMINI_VAD_PREFIX_PADDING_MS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(1000)
+      .default(40),
+    GEMINI_VAD_SILENCE_DURATION_MS: z.coerce
+      .number()
+      .int()
+      .min(50)
+      .max(2000)
+      .default(220),
     GEMINI_CHARACTER_SUBAGENT_MODEL: z.string().default('gemini-2.5-flash'),
     GEMINI_STORYBOARD_SUBAGENT_MODEL: z.string().default('gemini-2.5-flash'),
     GEMINI_STORYBOARD_IMAGE_MODEL: z.string().default('gemini-2.5-flash-image'),
@@ -57,6 +69,7 @@ const envSchema = z
       .preprocess(parseBooleanEnv, z.boolean())
       .default(false),
     DEBUG_MONITOR_MAX_EVENTS: z.coerce.number().int().min(100).default(2000),
+    WS_AUDIO_CHUNK_LOG_EVERY: z.coerce.number().int().min(1).default(20),
   })
   .superRefine((value, context) => {
     const provider =

@@ -2,6 +2,7 @@ import { createNodeWebSocket } from '@hono/node-ws';
 import type { Hono } from 'hono';
 import type { WSContext } from 'hono/ws';
 import { getSessionFromHeaders } from '../lib/auth';
+import { env } from '../lib/env';
 import { connectGeminiLiveBridge } from '../lib/gemini';
 import {
   closeDebugSession,
@@ -130,6 +131,10 @@ export function registerWs(app: Hono) {
       let drainingQueue = false;
       let drainingClientContentQueue = false;
       let ingestedAudioChunks = 0;
+      let forwardedAudioChunks = 0;
+
+      const shouldRecordAudioChunkEvent = (count: number) =>
+        count <= 3 || count % env.WS_AUDIO_CHUNK_LOG_EVERY === 0;
 
       const enqueueRealtimeChunk = (
         chunk: RealtimeAudioChunk,
@@ -144,11 +149,14 @@ export function registerWs(app: Hono) {
 
         realtimeQueue.push(chunk);
         ingestedAudioChunks += 1;
-        recordActionSent(debugSessionId, 'gemini.realtimeInput.queued', {
-          queueSize: realtimeQueue.length,
-          mimeType: chunk.media.mimeType,
-          dataLength: chunk.media.data.length,
-        });
+        if (shouldRecordAudioChunkEvent(ingestedAudioChunks)) {
+          recordActionSent(debugSessionId, 'gemini.realtimeInput.queued', {
+            queueSize: realtimeQueue.length,
+            mimeType: chunk.media.mimeType,
+            dataLength: chunk.media.data.length,
+            ingestedAudioChunks,
+          });
+        }
 
         if (ingestedAudioChunks % 5 === 0) {
           ws.send(
@@ -177,21 +185,44 @@ export function registerWs(app: Hono) {
               continue;
             }
 
-            await Promise.resolve(
-              geminiBridge.session.sendRealtimeInput({
-                audio: {
-                  mimeType: chunk.media.mimeType,
-                  data: chunk.media.data,
-                },
-              }),
-            );
-
-            recordActionSent(debugSessionId, 'gemini.realtimeInput.forwarded', {
-              queueSize: realtimeQueue.length,
-              mimeType: chunk.media.mimeType,
-              dataLength: chunk.media.data.length,
-              latencyMs: Date.now() - chunk.receivedAt,
+            const maybePromise = geminiBridge.session.sendRealtimeInput({
+              audio: {
+                mimeType: chunk.media.mimeType,
+                data: chunk.media.data,
+              },
             });
+            const latencyMs = Date.now() - chunk.receivedAt;
+
+            forwardedAudioChunks += 1;
+            if (shouldRecordAudioChunkEvent(forwardedAudioChunks)) {
+              recordActionSent(
+                debugSessionId,
+                'gemini.realtimeInput.forwarded',
+                {
+                  queueSize: realtimeQueue.length,
+                  mimeType: chunk.media.mimeType,
+                  dataLength: chunk.media.data.length,
+                  latencyMs,
+                  forwardedAudioChunks,
+                },
+              );
+            }
+
+            if (
+              maybePromise &&
+              typeof maybePromise === 'object' &&
+              'then' in maybePromise &&
+              typeof maybePromise.then === 'function'
+            ) {
+              void (maybePromise as Promise<unknown>).catch((error) => {
+                const message =
+                  error instanceof Error ? error.message : String(error);
+                recordActionSent(debugSessionId, 'gemini.realtimeInput.error', {
+                  message,
+                  queueSize: realtimeQueue.length,
+                });
+              });
+            }
           }
         } catch (error) {
           const message =
