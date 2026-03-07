@@ -4166,115 +4166,128 @@ export async function generateCharacterDesignTool(context: ToolContext) {
     characterNames,
   });
 
-  void Promise.resolve()
-    .then(async () => {
-      const results: Array<{
-        characterNodeId: string;
-        characterName: string;
-        ok: boolean;
-        message: string;
-        generatedCount?: number;
-        selectedCharacterDesignId?: string | null;
-      }> = [];
+  try {
+    const results: Array<{
+      characterNodeId: string;
+      characterName: string;
+      ok: boolean;
+      message: string;
+      generatedCount?: number;
+      selectedCharacterDesignId?: string | null;
+    }> = [];
 
-      for (const target of targets) {
-        try {
-          const generated = await generateCharacterDesignForNode({
-            characterNode: target,
-            style: styleCanonical.style,
-            optionsCount,
-            replaceExisting,
-          });
+    for (const target of targets) {
+      try {
+        const generated = await generateCharacterDesignForNode({
+          characterNode: target,
+          style: styleCanonical.style,
+          optionsCount,
+          replaceExisting,
+        });
 
-          if (!generated.ok) {
-            results.push({
-              characterNodeId: target.id,
-              characterName: target.name,
-              ok: false,
-              message: generated.message,
-            });
-            continue;
-          }
-
-          results.push({
-            characterNodeId: target.id,
-            characterName: target.name,
-            ok: true,
-            message: generated.message,
-            generatedCount: generated.generatedCount,
-            selectedCharacterDesignId: generated.selectedCharacterDesignId,
-          });
-        } catch (error) {
+        if (!generated.ok) {
           results.push({
             characterNodeId: target.id,
             characterName: target.name,
             ok: false,
-            message:
-              error instanceof Error
-                ? error.message
-                : 'Character design generation failed.',
+            message: generated.message,
           });
+          continue;
         }
+
+        results.push({
+          characterNodeId: target.id,
+          characterName: target.name,
+          ok: true,
+          message: generated.message,
+          generatedCount: generated.generatedCount,
+          selectedCharacterDesignId: generated.selectedCharacterDesignId,
+        });
+      } catch (error) {
+        results.push({
+          characterNodeId: target.id,
+          characterName: target.name,
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Character design generation failed.',
+        });
       }
+    }
 
-      const successCount = results.filter((item) => item.ok).length;
-      const failedCount = results.length - successCount;
+    const successCount = results.filter((item) => item.ok).length;
+    const failedCount = results.length - successCount;
 
-      const completionMessage =
-        failedCount === 0
-          ? `Character design generation finished ${modeLabel}.`
-          : `Character design generation finished with ${successCount} success and ${failedCount} failure(s) ${modeLabel}.`;
+    const completionMessage =
+      failedCount === 0
+        ? `Character design generation finished ${modeLabel}.`
+        : `Character design generation finished with ${successCount} success and ${failedCount} failure(s) ${modeLabel}.`;
 
-      emitCharacterDesignStatusEvent({
-        context,
-        phase: 'completed',
-        message: completionMessage,
-        projectId,
-        mode,
-        characterNodeIds,
-        characterNames,
-        successCount,
-        failedCount,
-      });
-
-      emitRuntimeEvent(context, {
-        type: 'agent.project.changed',
-        payload: {
-          projectId,
-          sourceTool: 'generate_character_design',
-        },
-      });
-    })
-    .catch((error) => {
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : 'Character design generation failed unexpectedly.';
-
-      emitCharacterDesignStatusEvent({
-        context,
-        phase: 'completed',
-        message: `Character design generation failed ${modeLabel}: ${errorMessage}`,
-        projectId,
-        mode,
-        characterNodeIds,
-        characterNames,
-        successCount: 0,
-        failedCount: characterNodeIds.length,
-      });
+    emitCharacterDesignStatusEvent({
+      context,
+      phase: 'completed',
+      message: completionMessage,
+      projectId,
+      mode,
+      characterNodeIds,
+      characterNames,
+      successCount,
+      failedCount,
     });
 
-  return {
-    ok: true,
-    deferred: true,
-    message: `Generating character designs ${modeLabel}. I will confirm once it's done.`,
-    mode,
-    optionsCount,
-    replaceExisting,
-    characterNodeIds,
-    characterNames,
-    startedAt: new Date().toISOString(),
-  };
+    emitRuntimeEvent(context, {
+      type: 'agent.project.changed',
+      payload: {
+        projectId,
+        sourceTool: 'generate_character_design',
+      },
+    });
+
+    return {
+      ok: failedCount < results.length,
+      message: completionMessage,
+      mode,
+      optionsCount,
+      replaceExisting,
+      characterNodeIds,
+      characterNames,
+      successCount,
+      failedCount,
+      results,
+      completedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : 'Character design generation failed unexpectedly.';
+
+    emitCharacterDesignStatusEvent({
+      context,
+      phase: 'completed',
+      message: `Character design generation failed ${modeLabel}: ${errorMessage}`,
+      projectId,
+      mode,
+      characterNodeIds,
+      characterNames,
+      successCount: 0,
+      failedCount: characterNodeIds.length,
+    });
+
+    return {
+      ok: false,
+      message: `Character design generation failed ${modeLabel}: ${errorMessage}`,
+      mode,
+      optionsCount,
+      replaceExisting,
+      characterNodeIds,
+      characterNames,
+      successCount: 0,
+      failedCount: characterNodeIds.length,
+      completedAt: new Date().toISOString(),
+    };
+  }
 }
 
 async function runStoryboardGenerationTool(

@@ -507,6 +507,7 @@ export const ProjectAgent: AgentDefinition = {
     'When deriving characters from story text, include only actors/people participating in events. Exclude product names, tools, platforms, locations, organizations, and other non-character entities.',
     'When the user asks generally for character designs (for example: "generate all character designs"), call generate_character_design without characterName so it runs for all character nodes.',
     'When the user asks for a specific character design (for example: "generate character design for Maya"), call generate_character_design with characterName set to that character only.',
+    'Only say character design generation is complete after generate_character_design returns a completion result. Do not claim it is finished while generation is still in progress.',
     'generate_character_design requires existing character nodes. If there are none, clearly tell the user to create/import character nodes first.',
     'Style direction is project context. Resolve canonical style state with get_project_style_node before major rewrite/retouch guidance.',
     'When the user asks to create/update/adjust style guidance, always execute a mutating style tool (upsert_project_style_node or refine_project_style_node) before responding.',

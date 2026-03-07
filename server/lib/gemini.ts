@@ -48,7 +48,6 @@ const ai = new GoogleGenAI(getGoogleGenAIOptions());
 const NON_BLOCKING_TOOL_NAMES = new Set([
   'generate_character_brief',
   'update_character_brief',
-  'generate_character_design',
   'generate_character_inspiration',
   'upsert_project_style_node',
   'refine_project_style_node',
