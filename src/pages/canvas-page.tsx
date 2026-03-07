@@ -222,6 +222,13 @@ type CharacterDesignUiState = {
   error: string;
 };
 
+type ProjectListItem = {
+  id: string;
+  name: string;
+  updatedAt: string;
+  story: { title: string } | null;
+};
+
 const CANVAS_GRID_START_X = 80;
 const CANVAS_GRID_START_Y = 120;
 const CANVAS_GRID_STEP_X = 360;
@@ -1233,9 +1240,10 @@ function CharacterDesignNodeComponent({
   );
 }
 
-function mergeCaptionText(previous: string, incoming: string): string {
-  const prev = previous.trim();
-  const next = incoming.trim();
+function mergeCaptionText(previous: string, rawIncoming: string): string {
+  // prev is always stored trimmed; preserve raw incoming for spacing detection
+  const prev = previous;
+  const next = rawIncoming.trim();
 
   if (!next) {
     return prev;
@@ -1249,15 +1257,19 @@ function mergeCaptionText(previous: string, incoming: string): string {
     return prev;
   }
 
+  // Cumulative transcription replacement: return whichever is longer
   if (next.startsWith(prev) || prev.startsWith(next)) {
-    return next;
+    return next.length >= prev.length ? next : prev;
   }
 
   if (/^[.,!?;:]+$/.test(next)) {
     return `${prev}${next}`;
   }
 
-  return `${prev} ${next}`;
+  // Use leading space in rawIncoming as word-boundary signal.
+  // Tokens without a leading space are mid-word fragments — join directly.
+  const isNewWord = rawIncoming.startsWith(' ');
+  return isNewWord ? `${prev} ${next}` : `${prev}${next}`;
 }
 
 function parseCharacterProfile(profileJson?: string | null) {
@@ -1640,7 +1652,8 @@ function updateCaptionLines(
     return next.slice(-12);
   }
 
-  const merged = mergeCaptionText(last.text, trimmed);
+  // Pass raw text (before trim) so mergeCaptionText can use leading-space signal
+  const merged = mergeCaptionText(last.text, text);
   if (merged === last.text) {
     return next;
   }
@@ -1713,7 +1726,9 @@ function extractOutputTranscription(payload: unknown): string | null {
   }
 
   const text = (outputTranscription as Record<string, unknown>).text;
-  return typeof text === 'string' && text.trim() ? text.trim() : null;
+  if (typeof text !== 'string' || !text.trim()) return null;
+  // Preserve leading space — it is the word-boundary signal for mergeCaptionText.
+  return text.trimEnd();
 }
 
 function extractInputTranscription(payload: unknown): string | null {
@@ -1734,7 +1749,9 @@ function extractInputTranscription(payload: unknown): string | null {
   }
 
   const text = (inputTranscription as Record<string, unknown>).text;
-  return typeof text === 'string' && text.trim() ? text.trim() : null;
+  if (typeof text !== 'string' || !text.trim()) return null;
+  // Preserve leading space — it is the word-boundary signal for mergeCaptionText.
+  return text.trimEnd();
 }
 
 function extractVoiceState(payload: unknown): VoiceState | null {
@@ -1890,6 +1907,9 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     Record<string, CharacterDesignUiState>
   >({});
   const [debugTextInput, setDebugTextInput] = useState('');
+  const [projectListCard, setProjectListCard] = useState<
+    ProjectListItem[] | null
+  >(null);
   const initialProjectIdRef = useRef(activeProjectId);
   const activeProjectIdRef = useRef(activeProjectId);
   const socketClientRef = useRef<ReturnType<typeof createAgentSocket> | null>(
@@ -2437,6 +2457,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             const pendingName = requestedProjectName?.trim();
             setActiveProjectId(requestedProjectId);
             setProjectName(pendingName || 'Active project');
+            setProjectListCard(null);
 
             pendingContextSwitchRef.current = {
               projectId: requestedProjectId,
@@ -2466,8 +2487,50 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             payload && typeof payload.projectId === 'string'
               ? payload.projectId.trim()
               : '';
+          const contextChanged =
+            payload && typeof payload.contextChanged === 'boolean'
+              ? payload.contextChanged
+              : false;
           setActiveProjectId(activeProjectIdFromMessage);
           setProjectName(activeName || 'Active project');
+          if (contextChanged) {
+            setProjectListCard(null);
+          }
+          return;
+        }
+
+        if (message.type === 'agent.projects.listed') {
+          const payload =
+            message.payload && typeof message.payload === 'object'
+              ? (message.payload as Record<string, unknown>)
+              : null;
+          const rawProjects =
+            payload && Array.isArray(payload.projects) ? payload.projects : [];
+          const items: ProjectListItem[] = rawProjects
+            .filter(
+              (p): p is Record<string, unknown> =>
+                Boolean(p) && typeof p === 'object',
+            )
+            .map((p) => ({
+              id: typeof p.id === 'string' ? p.id : '',
+              name: typeof p.name === 'string' ? p.name : 'Untitled',
+              updatedAt:
+                typeof p.updatedAt === 'string'
+                  ? p.updatedAt
+                  : new Date().toISOString(),
+              story:
+                p.story && typeof p.story === 'object'
+                  ? {
+                      title:
+                        typeof (p.story as Record<string, unknown>).title ===
+                        'string'
+                          ? ((p.story as Record<string, unknown>)
+                              .title as string)
+                          : '',
+                    }
+                  : null,
+            }));
+          setProjectListCard(items);
           return;
         }
 
@@ -5100,6 +5163,56 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           <Controls className='!rounded-xl !border-2 !border-black !shadow-[3px_3px_0_#1A1A1A] !bottom-5 !left-5' />
           <Background gap={24} size={1} color='#D4D0C4' />
         </ReactFlow>
+
+        {!activeProjectId.trim() && !projectListCard && (
+          <div className='pointer-events-none absolute inset-0 flex items-center justify-center'>
+            <p className='font-black text-2xl uppercase tracking-widest text-[#1A1A1A]/25 select-none'>
+              Let&apos;s work on something today
+            </p>
+          </div>
+        )}
+
+        {projectListCard && (
+          <div className='pointer-events-none absolute inset-0 z-20 flex items-center justify-center'>
+            <div className='w-full max-w-sm rounded-2xl border-2 border-black bg-white shadow-[6px_6px_0_#1A1A1A]'>
+              <div className='border-b-2 border-black px-5 py-3'>
+                <span className='text-xs font-black uppercase tracking-widest text-[#1A1A1A]'>
+                  Your Projects
+                </span>
+              </div>
+              {projectListCard.length === 0 ? (
+                <div className='px-5 py-6 text-center font-mono text-sm text-muted-foreground'>
+                  No projects yet.
+                </div>
+              ) : (
+                <ul className='divide-y divide-black/10 px-0 py-0'>
+                  {projectListCard.map((project) => (
+                    <li
+                      key={project.id}
+                      className='flex items-center justify-between gap-4 px-5 py-3'>
+                      <div className='min-w-0'>
+                        <p className='truncate text-sm font-bold text-[#1A1A1A]'>
+                          {project.name}
+                        </p>
+                        {project.story?.title ? (
+                          <p className='truncate font-mono text-xs text-muted-foreground'>
+                            {project.story.title}
+                          </p>
+                        ) : null}
+                      </div>
+                      <span className='shrink-0 font-mono text-[10px] text-muted-foreground'>
+                        {new Date(project.updatedAt).toLocaleDateString(
+                          undefined,
+                          { month: 'short', day: 'numeric', year: 'numeric' },
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ── Bottom: caption + mic controls ── */}
         <div className='absolute bottom-5 left-1/2 z-10 w-full max-w-xl -translate-x-1/2 px-4'>

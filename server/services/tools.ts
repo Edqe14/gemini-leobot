@@ -3001,6 +3001,18 @@ export async function listProjectsTool(context: ToolContext) {
     },
   });
 
+  context.emitEvent?.({
+    type: 'agent.projects.listed',
+    payload: {
+      projects: projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        updatedAt: project.updatedAt,
+        story: project.story ? { title: project.story.title } : null,
+      })),
+    },
+  });
+
   return {
     ok: true,
     count: projects.length,
