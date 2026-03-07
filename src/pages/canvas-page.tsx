@@ -18,9 +18,6 @@ import {
 import { Captions, CaptionsOff, Mic, MicOff, User } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AuthGate } from '@/components/auth-gate';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import {
   initialEdges,
   initialNodes,
@@ -438,114 +435,124 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
   const nodeData = data;
 
   return (
-    <Card className='relative w-200 border border-border/80 bg-card/95 p-4 shadow-sm backdrop-blur'>
+    <div className='relative w-200 overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
       {nodeData.hasIncomingConnection ? (
         <>
           <Handle
             type='target'
             id={getTargetHandleId('top')}
             position={Position.Top}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('right')}
             position={Position.Right}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('bottom')}
             position={Position.Bottom}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('left')}
             position={Position.Left}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
         </>
       ) : null}
-      <div className='mb-3'>
-        <p className='text-sm font-semibold'>Story</p>
+
+      {/* header */}
+      <div className='flex items-center gap-2 border-b-2 border-black bg-[#FFE234] px-4 py-2.5'>
+        <span className='text-xs font-black uppercase tracking-widest'>
+          Story
+        </span>
       </div>
 
-      <div className='mb-3 flex items-center gap-2'>
-        <Button
-          type='button'
-          variant='outline'
-          className={`nodrag h-8 min-w-28 px-3 text-xs ${
-            nodeData.mode === 'markdown'
-              ? 'border-border bg-secondary text-foreground'
-              : 'border-border bg-background text-muted-foreground'
-          }`}
-          onClick={() => nodeData.onModeChange('markdown')}>
-          Markdown
-        </Button>
-        <Button
-          type='button'
-          variant='outline'
-          className={`nodrag h-8 min-w-28 px-3 text-xs ${
-            nodeData.mode === 'google_docs'
-              ? 'border-border bg-secondary text-foreground'
-              : 'border-border bg-background text-muted-foreground'
-          }`}
-          onClick={() => nodeData.onModeChange('google_docs')}>
-          Google Docs
-        </Button>
-      </div>
-
-      {nodeData.mode === 'markdown' ? (
-        <div className='space-y-3'>
-          <textarea
-            value={nodeData.markdownInput}
-            onChange={(event) => nodeData.onMarkdownChange(event.target.value)}
-            placeholder='Paste your markdown story here...'
-            className='nodrag nowheel nopan h-64 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm'
-          />
-        </div>
-      ) : (
-        <div className='space-y-3'>
-          <input
-            type='url'
-            value={nodeData.googleDocUrl}
-            onChange={(event) =>
-              nodeData.onGoogleDocUrlChange(event.target.value)
-            }
-            placeholder='https://docs.google.com/document/d/...'
-            className='nodrag nowheel nopan h-10 w-full rounded-md border border-input bg-background px-3 text-sm'
-          />
-          <Button
+      <div className='p-4'>
+        <div className='mb-3 flex items-center gap-2'>
+          <button
             type='button'
-            className='nodrag w-full bg-primary/90 text-primary-foreground hover:bg-primary'
-            disabled={nodeData.busy || !nodeData.activeProjectId.trim()}
-            onClick={nodeData.onFetchGoogleDocs}>
-            {nodeData.busy ? 'Fetching...' : 'Fetch From Google Docs'}
-          </Button>
+            className={`nodrag h-8 min-w-28 rounded-lg border-2 border-black px-3 text-xs font-bold uppercase tracking-wide transition ${
+              nodeData.mode === 'markdown'
+                ? 'bg-[#1A1A1A] text-[#FFE234] shadow-[2px_2px_0_#4A4A4A]'
+                : 'bg-white hover:bg-[#EDEAD9]'
+            }`}
+            onClick={() => nodeData.onModeChange('markdown')}>
+            Markdown
+          </button>
+          <button
+            type='button'
+            className={`nodrag h-8 min-w-28 rounded-lg border-2 border-black px-3 text-xs font-bold uppercase tracking-wide transition ${
+              nodeData.mode === 'google_docs'
+                ? 'bg-[#1A1A1A] text-[#FFE234] shadow-[2px_2px_0_#4A4A4A]'
+                : 'bg-white hover:bg-[#EDEAD9]'
+            }`}
+            onClick={() => nodeData.onModeChange('google_docs')}>
+            Google Docs
+          </button>
         </div>
-      )}
 
-      {nodeData.status && nodeData.mode !== 'markdown' ? (
-        <p className='mt-2 text-xs text-muted-foreground'>{nodeData.status}</p>
-      ) : null}
-      {nodeData.error ? (
-        <p className='mt-2 text-xs text-destructive'>{nodeData.error}</p>
-      ) : null}
-      {nodeData.mode === 'markdown' ? (
-        <div className='mt-3 flex justify-end'>
-          <p className='text-xs text-muted-foreground'>
-            {nodeData.busy
-              ? 'Saving...'
-              : nodeData.status === 'Autosaved'
-                ? 'Saved'
-                : nodeData.status === 'Autosave failed'
-                  ? 'Save failed'
-                  : nodeData.status || 'Autosave'}
+        {nodeData.mode === 'markdown' ? (
+          <div className='space-y-3'>
+            <textarea
+              value={nodeData.markdownInput}
+              onChange={(event) =>
+                nodeData.onMarkdownChange(event.target.value)
+              }
+              placeholder='Paste your markdown story here...'
+              className='nodrag nowheel nopan h-64 w-full resize-y rounded-xl border-2 border-black bg-[#F7F4EC] px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-black'
+            />
+          </div>
+        ) : (
+          <div className='space-y-3'>
+            <input
+              type='url'
+              value={nodeData.googleDocUrl}
+              onChange={(event) =>
+                nodeData.onGoogleDocUrlChange(event.target.value)
+              }
+              placeholder='https://docs.google.com/document/d/...'
+              className='nodrag nowheel nopan h-10 w-full rounded-lg border-2 border-black bg-[#F7F4EC] px-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-black'
+            />
+            <button
+              type='button'
+              className='nodrag w-full rounded-xl border-2 border-black bg-[#1A1A1A] py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-50'
+              disabled={nodeData.busy || !nodeData.activeProjectId.trim()}
+              onClick={nodeData.onFetchGoogleDocs}>
+              {nodeData.busy ? 'Fetching...' : 'Fetch From Google Docs'}
+            </button>
+          </div>
+        )}
+
+        {nodeData.status && nodeData.mode !== 'markdown' ? (
+          <p className='mt-2 font-mono text-xs text-muted-foreground'>
+            {nodeData.status}
           </p>
-        </div>
-      ) : null}
-    </Card>
+        ) : null}
+        {nodeData.error ? (
+          <p className='mt-2 font-mono text-xs text-[#FF6B6B]'>
+            {nodeData.error}
+          </p>
+        ) : null}
+        {nodeData.mode === 'markdown' ? (
+          <div className='mt-3 flex justify-end'>
+            <p className='font-mono text-xs text-muted-foreground'>
+              {nodeData.busy
+                ? 'Saving...'
+                : nodeData.status === 'Autosaved'
+                  ? '✓ Saved'
+                  : nodeData.status === 'Autosave failed'
+                    ? '✗ Save failed'
+                    : nodeData.status || 'Autosave'}
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -553,32 +560,32 @@ function CharacterCardNodeComponent({
   data,
 }: NodeProps<CharacterCardCanvasNode>) {
   return (
-    <Card className='relative w-115 border border-border/90 bg-card p-4 shadow-sm'>
+    <div className='relative w-115 overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
       {data.hasIncomingConnection ? (
         <>
           <Handle
             type='target'
             id={getTargetHandleId('top')}
             position={Position.Top}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('right')}
             position={Position.Right}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('bottom')}
             position={Position.Bottom}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('left')}
             position={Position.Left}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
         </>
       ) : null}
@@ -588,38 +595,46 @@ function CharacterCardNodeComponent({
             type='source'
             id={getSourceHandleId('top')}
             position={Position.Top}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('right')}
             position={Position.Right}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('bottom')}
             position={Position.Bottom}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('left')}
             position={Position.Left}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
         </>
       ) : null}
-      <div className='space-y-3'>
-        <div className='rounded-xl border border-border bg-background px-4 py-3'>
+
+      {/* header */}
+      <div className='flex items-center gap-2 border-b-2 border-black bg-[#FF6B6B] px-4 py-2.5'>
+        <span className='text-xs font-black uppercase tracking-widest'>
+          Character
+        </span>
+      </div>
+
+      <div className='space-y-3 p-4'>
+        <div className='rounded-xl border-2 border-black bg-[#F7F4EC] px-4 py-3'>
           <input
             value={data.name}
             onChange={(event) => data.onNameChange(event.target.value)}
             placeholder='Character name'
-            className='nodrag nowheel nopan w-full border-0 bg-transparent text-center text-lg font-semibold leading-tight outline-none'
+            className='nodrag nowheel nopan w-full border-0 bg-transparent text-center text-lg font-black leading-tight outline-none placeholder:text-black/30'
           />
         </div>
-        <div className='min-h-22 rounded-xl border border-border bg-background px-4 py-3'>
+        <div className='min-h-22 rounded-xl border-2 border-black bg-[#F7F4EC] px-4 py-3'>
           <textarea
             value={data.description}
             onChange={(event) => data.onDescriptionChange(event.target.value)}
@@ -629,149 +644,144 @@ function CharacterCardNodeComponent({
         </div>
       </div>
 
-      <div className='mt-4 min-h-52 rounded-xl border border-border bg-background px-4 py-4'>
-        <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
-          Character Traits, Behaviour, Style
+      <div className='mx-4 mb-4 min-h-52 rounded-xl border-2 border-black bg-[#F7F4EC] px-4 py-4'>
+        <p className='mb-2 font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+          Traits · Behaviour · Style
         </p>
         <textarea
           value={data.traitsText}
           onChange={(event) => data.onTraitsChange(event.target.value)}
-          placeholder='Behavior: ...\nStyle: ...\nPersonality: ...\nGoals: ...\nNotes: ...'
+          placeholder={
+            'Behavior: ...\nStyle: ...\nPersonality: ...\nGoals: ...\nNotes: ...'
+          }
           className='nodrag nowheel nopan min-h-44 w-full resize-y border-0 bg-transparent font-mono text-sm leading-relaxed text-foreground/90 outline-none'
         />
       </div>
 
-      <div className='mt-3 flex justify-end'>
-        <p className='text-xs text-muted-foreground'>
+      <div className='flex justify-end px-4 pb-3'>
+        <p className='font-mono text-xs text-muted-foreground'>
           {data.saveState === 'saving'
             ? 'Saving...'
             : data.saveState === 'saved'
-              ? 'Saved'
+              ? '✓ Saved'
               : data.saveState === 'error'
-                ? data.saveMessage || 'Save failed'
+                ? data.saveMessage || '✗ Save failed'
                 : data.saveMessage || 'Autosave'}
         </p>
       </div>
-    </Card>
+    </div>
   );
 }
 
 function StyleCardNodeComponent({ data }: NodeProps<StyleCardCanvasNode>) {
   return (
-    <Card className='relative w-130 border border-border/90 bg-card p-4 shadow-sm'>
+    <div className='relative w-130 overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
       {data.hasOutgoingConnection ? (
         <>
           <Handle
             type='source'
             id={getSourceHandleId('top')}
             position={Position.Top}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('right')}
             position={Position.Right}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('bottom')}
             position={Position.Bottom}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('left')}
             position={Position.Left}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
         </>
       ) : null}
-      <div className='space-y-3'>
-        <div className='px-2 py-1'>
-          <p className='text-center text-2xl font-semibold leading-tight tracking-tight'>
-            {data.name || 'Project Style Guide'}
-          </p>
-        </div>
-        <div className='grid gap-3'>
-          <div className='rounded-xl border border-border bg-background px-4 py-3'>
-            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
-              Writing Style
-            </p>
-            <textarea
-              value={data.writingStyle}
-              onChange={(event) =>
-                data.onWritingStyleChange(event.target.value)
-              }
-              placeholder='Rewrite/retouch voice, diction, tone, and narration style.'
-              className='nodrag nowheel nopan min-h-18 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none'
-            />
-          </div>
-          <div className='rounded-xl border border-border bg-background px-4 py-3'>
-            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
-              Character Style
-            </p>
-            <textarea
-              value={data.characterStyle}
-              onChange={(event) =>
-                data.onCharacterStyleChange(event.target.value)
-              }
-              placeholder='General character portrayal, voice consistency, and behavior framing.'
-              className='nodrag nowheel nopan min-h-18 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none'
-            />
-          </div>
-          <div className='rounded-xl border border-border bg-background px-4 py-3'>
-            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
-              Art Style
-            </p>
-            <textarea
-              value={data.artStyle}
-              onChange={(event) => data.onArtStyleChange(event.target.value)}
-              placeholder='Visual language, camera mood, palette, and art direction.'
-              className='nodrag nowheel nopan min-h-18 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none'
-            />
-          </div>
-          <div className='rounded-xl border border-border bg-background px-4 py-3'>
-            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
-              Storytelling Pacing
-            </p>
-            <textarea
-              value={data.storytellingPacing}
-              onChange={(event) =>
-                data.onStorytellingPacingChange(event.target.value)
-              }
-              placeholder='Rhythm, beat spacing, tension curve, and cadence guidance.'
-              className='nodrag nowheel nopan min-h-18 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none'
-            />
-          </div>
-          <div className='rounded-xl border border-border bg-background px-4 py-3'>
-            <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
-              Additional Style Dimensions
-            </p>
-            <textarea
-              value={data.extrasText}
-              onChange={(event) => data.onExtrasTextChange(event.target.value)}
-              placeholder={
-                'Humor: dry and situational\nDialogue density: sparse but sharp'
-              }
-              className='nodrag nowheel nopan min-h-20 w-full resize-y border-0 bg-transparent font-mono text-sm leading-relaxed text-foreground/90 outline-none'
-            />
-          </div>
-        </div>
+
+      {/* header */}
+      <div className='flex items-center justify-between border-b-2 border-black bg-[#4ECDC4] px-4 py-2.5'>
+        <span className='text-xs font-black uppercase tracking-widest'>
+          Style Guide
+        </span>
+        <span className='font-mono text-xs font-bold'>
+          {data.name || 'Project Style'}
+        </span>
       </div>
 
-      <div className='mt-3 flex justify-end'>
-        <p className='text-xs text-muted-foreground'>
+      <div className='space-y-0 divide-y-2 divide-black p-0'>
+        {[
+          {
+            label: 'Writing Style',
+            value: data.writingStyle,
+            placeholder:
+              'Rewrite/retouch voice, diction, tone, and narration style.',
+            onChange: data.onWritingStyleChange,
+          },
+          {
+            label: 'Character Style',
+            value: data.characterStyle,
+            placeholder:
+              'General character portrayal, voice consistency, and behavior framing.',
+            onChange: data.onCharacterStyleChange,
+          },
+          {
+            label: 'Art Style',
+            value: data.artStyle,
+            placeholder:
+              'Visual language, camera mood, palette, and art direction.',
+            onChange: data.onArtStyleChange,
+          },
+          {
+            label: 'Storytelling Pacing',
+            value: data.storytellingPacing,
+            placeholder:
+              'Rhythm, beat spacing, tension curve, and cadence guidance.',
+            onChange: data.onStorytellingPacingChange,
+          },
+          {
+            label: 'Additional Dimensions',
+            value: data.extrasText,
+            placeholder:
+              'Humor: dry and situational\nDialogue density: sparse but sharp',
+            onChange: data.onExtrasTextChange,
+            mono: true,
+          },
+        ].map(({ label, value, placeholder, onChange, mono }) => (
+          <div key={label} className='bg-[#F7F4EC] px-4 py-3'>
+            <p
+              className='mb-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-[#4ECDC4]'
+              style={{ color: '#2A9E96' }}>
+              {label}
+            </p>
+            <textarea
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              placeholder={placeholder}
+              className={`nodrag nowheel nopan min-h-16 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none ${mono ? 'font-mono' : ''}`}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className='flex justify-end border-t-2 border-black bg-white px-4 py-2.5'>
+        <p className='font-mono text-xs text-muted-foreground'>
           {data.saveState === 'saving'
             ? 'Saving...'
             : data.saveState === 'saved'
-              ? 'Saved'
+              ? '✓ Saved'
               : data.saveState === 'error'
-                ? data.saveMessage || 'Save failed'
+                ? data.saveMessage || '✗ Save failed'
                 : data.saveMessage || 'Autosave'}
         </p>
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -779,32 +789,32 @@ function StoryboardCardNodeComponent({
   data,
 }: NodeProps<StoryboardCardCanvasNode>) {
   return (
-    <Card className='relative w-180 border border-border/90 bg-card p-4 shadow-sm'>
+    <div className='relative w-180 overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
       {data.hasIncomingConnection ? (
         <>
           <Handle
             type='target'
             id={getTargetHandleId('top')}
             position={Position.Top}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('right')}
             position={Position.Right}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('bottom')}
             position={Position.Bottom}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('left')}
             position={Position.Left}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
         </>
       ) : null}
@@ -814,169 +824,182 @@ function StoryboardCardNodeComponent({
             type='source'
             id={getSourceHandleId('top')}
             position={Position.Top}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('right')}
             position={Position.Right}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('bottom')}
             position={Position.Bottom}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('left')}
             position={Position.Left}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
         </>
       ) : null}
 
-      <div className='mb-3'>
+      {/* header */}
+      <div className='flex items-center gap-3 border-b-2 border-black bg-[#FF9F1C] px-4 py-2.5'>
+        <span className='text-xs font-black uppercase tracking-widest'>
+          Storyboard
+        </span>
         <input
           value={data.title}
           onChange={(event) => data.onTitleChange(event.target.value)}
-          placeholder='Storyboard'
-          className='nodrag nowheel nopan w-full rounded-lg border border-input bg-background px-3 py-2 text-xl font-semibold outline-none'
+          placeholder='Storyboard title'
+          className='nodrag nowheel nopan flex-1 border-0 bg-transparent text-sm font-bold outline-none placeholder:text-black/30'
         />
       </div>
 
-      <div className='space-y-4'>
+      <div className='space-y-3 p-4'>
         {!data.frames.length ? (
-          <div className='rounded-xl border border-dashed border-amber-500/60 bg-amber-50/60 p-4 text-sm text-amber-700'>
+          <div className='rounded-xl border-2 border-black bg-[#FF9F1C]/20 p-4 text-sm font-medium'>
             {data.saveState === 'generating'
               ? data.saveMessage || 'Generating storyboard descriptions...'
               : 'No frames yet.'}
           </div>
         ) : null}
+
         {data.frames.map((frame) => (
           <div
             key={`${data.storyboardId}-${frame.frameNumber}`}
-            className='space-y-2 rounded-xl border border-border bg-background/60 p-3'>
-            <p className='text-sm font-semibold text-foreground'>
-              {frame.frameNumber}
-            </p>
-
-            <div className='grid grid-cols-[220px_1fr] gap-3'>
-              <div className='space-y-2'>
-                <div className='flex h-32 items-center justify-center rounded-lg border border-sky-500/70 bg-background text-sm text-sky-700'>
-                  {frame.imageUrl ? (
-                    <img
-                      src={frame.imageUrl}
-                      alt={`Storyboard frame ${frame.frameNumber}`}
-                      className='h-full w-full rounded-md object-cover'
-                      onError={(event) => {
-                        const target = event.currentTarget;
-                        const baseUrl = frame.imageUrl || '';
-                        if (!baseUrl) {
-                          return;
-                        }
-
-                        const retryCount = Number(
-                          target.dataset.retryCount || '0',
-                        );
-                        if (retryCount >= 4) {
-                          return;
-                        }
-
-                        target.dataset.retryCount = String(retryCount + 1);
-                        window.setTimeout(
-                          () => {
-                            const separator = baseUrl.includes('?') ? '&' : '?';
-                            target.src = `${baseUrl}${separator}retry=${Date.now()}`;
-                          },
-                          500 * (retryCount + 1),
-                        );
-                      }}
-                    />
-                  ) : frame.imageStatus === 'pending' ? (
-                    <span className='animate-pulse text-xs text-sky-700'>
-                      Generating image...
-                    </span>
-                  ) : frame.imageStatus === 'failed' ? (
-                    <button
-                      type='button'
-                      className='nodrag rounded px-2 py-1 text-xs text-destructive underline-offset-2 hover:underline'
-                      onClick={() => data.onFrameRetryImage(frame.frameNumber)}>
-                      Image failed. Click to retry.
-                    </button>
-                  ) : (
-                    'Frame image'
-                  )}
-                </div>
-              </div>
-
-              <textarea
-                value={frame.description}
-                onChange={(event) =>
-                  data.onFrameDescriptionChange(
-                    frame.frameNumber,
-                    event.target.value,
-                  )
-                }
-                placeholder='Detailed frame description, camera angle, action, character and design notes.'
-                className='nodrag nowheel nopan min-h-32 w-full resize-y rounded-lg border border-amber-500/70 bg-background px-3 py-2 text-sm leading-relaxed outline-none'
-              />
+            className='overflow-hidden rounded-xl border-2 border-black bg-[#F7F4EC]'>
+            <div className='flex items-center gap-2 border-b-2 border-black bg-[#FF9F1C]/30 px-3 py-1.5'>
+              <span className='font-mono text-xs font-black'>
+                Frame {frame.frameNumber}
+              </span>
             </div>
+            <div className='p-3'>
+              <div className='grid grid-cols-[220px_1fr] gap-3'>
+                <div className='space-y-2'>
+                  <div className='flex h-32 items-center justify-center overflow-hidden rounded-xl border-2 border-black bg-white text-sm'>
+                    {frame.imageUrl ? (
+                      <img
+                        src={frame.imageUrl}
+                        alt={`Storyboard frame ${frame.frameNumber}`}
+                        className='h-full w-full rounded-xl object-cover'
+                        onError={(event) => {
+                          const target = event.currentTarget;
+                          const baseUrl = frame.imageUrl || '';
+                          if (!baseUrl) {
+                            return;
+                          }
 
-            <div className='flex items-center justify-between gap-3'>
-              <p className='text-xs text-muted-foreground'>
-                {frame.cameraAngle || frame.cameraMovement
-                  ? `Camera: ${frame.cameraAngle || 'n/a'} / ${frame.cameraMovement || 'static'}`
-                  : 'Camera details are included in description.'}
-              </p>
-              <label className='flex items-center gap-2 text-xs text-rose-600'>
-                Duration
-                <input
-                  type='number'
-                  min={0.1}
-                  step={0.1}
-                  value={
-                    Number.isFinite(frame.durationSeconds)
-                      ? frame.durationSeconds
-                      : 3
-                  }
+                          const retryCount = Number(
+                            target.dataset.retryCount || '0',
+                          );
+                          if (retryCount >= 4) {
+                            return;
+                          }
+
+                          target.dataset.retryCount = String(retryCount + 1);
+                          window.setTimeout(
+                            () => {
+                              const separator = baseUrl.includes('?')
+                                ? '&'
+                                : '?';
+                              target.src = `${baseUrl}${separator}retry=${Date.now()}`;
+                            },
+                            500 * (retryCount + 1),
+                          );
+                        }}
+                      />
+                    ) : frame.imageStatus === 'pending' ? (
+                      <span className='animate-pulse font-mono text-xs text-muted-foreground'>
+                        Generating...
+                      </span>
+                    ) : frame.imageStatus === 'failed' ? (
+                      <button
+                        type='button'
+                        className='nodrag rounded-lg border-2 border-black bg-[#FF6B6B] px-2 py-1 font-mono text-xs font-bold'
+                        onClick={() =>
+                          data.onFrameRetryImage(frame.frameNumber)
+                        }>
+                        Failed · Retry
+                      </button>
+                    ) : (
+                      <span className='font-mono text-xs text-muted-foreground'>
+                        Frame image
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <textarea
+                  value={frame.description}
                   onChange={(event) =>
-                    data.onFrameDurationChange(
+                    data.onFrameDescriptionChange(
                       frame.frameNumber,
-                      Number(event.target.value),
+                      event.target.value,
                     )
                   }
-                  className='nodrag nowheel nopan h-8 w-18 rounded-md border border-input bg-background px-2 text-xs outline-none'
+                  placeholder='Detailed frame description, camera angle, action, character and design notes.'
+                  className='nodrag nowheel nopan min-h-32 w-full resize-y rounded-xl border-2 border-black bg-white px-3 py-2 text-sm leading-relaxed outline-none focus:ring-2 focus:ring-black'
                 />
-              </label>
+              </div>
+
+              <div className='mt-2 flex items-center justify-between gap-3'>
+                <p className='font-mono text-xs text-muted-foreground'>
+                  {frame.cameraAngle || frame.cameraMovement
+                    ? `${frame.cameraAngle || 'n/a'} / ${frame.cameraMovement || 'static'}`
+                    : 'Camera in description'}
+                </p>
+                <label className='flex items-center gap-2 font-mono text-xs font-bold text-[#FF6B6B]'>
+                  Duration
+                  <input
+                    type='number'
+                    min={0.1}
+                    step={0.1}
+                    value={
+                      Number.isFinite(frame.durationSeconds)
+                        ? frame.durationSeconds
+                        : 3
+                    }
+                    onChange={(event) =>
+                      data.onFrameDurationChange(
+                        frame.frameNumber,
+                        Number(event.target.value),
+                      )
+                    }
+                    className='nodrag nowheel nopan h-7 w-18 rounded-lg border-2 border-black bg-white px-2 font-mono text-xs outline-none'
+                  />
+                </label>
+              </div>
             </div>
           </div>
         ))}
 
-        <Button
+        <button
           type='button'
-          variant='outline'
-          className='nodrag h-12 w-full border-emerald-500 text-emerald-700 hover:bg-emerald-50'
+          className='nodrag w-full rounded-xl border-2 border-black bg-[#CCFF00] py-3 text-sm font-black uppercase tracking-wide shadow-[3px_3px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#1A1A1A]'
           onClick={data.onFrameAdd}>
           + Add Frame
-        </Button>
+        </button>
       </div>
 
-      <div className='mt-3 flex justify-end'>
-        <p className='text-xs text-muted-foreground'>
+      <div className='flex justify-end border-t-2 border-black bg-white px-4 py-2.5'>
+        <p className='font-mono text-xs text-muted-foreground'>
           {data.saveState === 'generating'
             ? data.saveMessage || 'Generating storyboard...'
             : data.saveState === 'saving'
               ? 'Saving...'
               : data.saveState === 'saved'
-                ? 'Saved'
+                ? '✓ Saved'
                 : data.saveState === 'error'
-                  ? data.saveMessage || 'Save failed'
+                  ? data.saveMessage || '✗ Save failed'
                   : data.saveMessage || 'Autosave'}
         </p>
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -1033,9 +1056,9 @@ function CharacterDesignNodeComponent({
   };
 
   return (
-    <Card
-      className={`relative border border-border/90 bg-card shadow-sm ${
-        isPickedMode ? 'w-120 p-2.5' : 'w-220 p-4'
+    <div
+      className={`relative overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A] ${
+        isPickedMode ? 'w-120' : 'w-220'
       }`}>
       {data.hasIncomingConnection ? (
         <>
@@ -1043,25 +1066,25 @@ function CharacterDesignNodeComponent({
             type='target'
             id={getTargetHandleId('top')}
             position={Position.Top}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('right')}
             position={Position.Right}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('bottom')}
             position={Position.Bottom}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
           <Handle
             type='target'
             id={getTargetHandleId('left')}
             position={Position.Left}
-            className='!h-3 !w-3 !border !border-border !bg-background'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#FFE234]'
           />
         </>
       ) : null}
@@ -1071,136 +1094,142 @@ function CharacterDesignNodeComponent({
             type='source'
             id={getSourceHandleId('top')}
             position={Position.Top}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('right')}
             position={Position.Right}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('bottom')}
             position={Position.Bottom}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
           <Handle
             type='source'
             id={getSourceHandleId('left')}
             position={Position.Left}
-            className='!h-3 !w-3 !border !border-border !bg-foreground/80'
+            className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-black !bg-[#CCFF00]'
           />
         </>
       ) : null}
 
-      <div
-        className={`flex items-center justify-between gap-3 ${isPickedMode ? 'mb-2' : 'mb-3'}`}>
-        <p className='text-lg font-semibold'>
-          Character Design for {displayName}
-        </p>
+      {/* header */}
+      <div className='flex items-center justify-between gap-3 border-b-2 border-black bg-[#C084FC] px-4 py-2.5'>
+        <span className='text-xs font-black uppercase tracking-widest'>
+          Design · {displayName}
+        </span>
         {data.mode === 'options' ? (
           <div className='flex items-center gap-2'>
             {data.selectedOptionId ? (
-              <Button
+              <button
                 type='button'
-                variant='outline'
-                className='nodrag h-8 px-4 text-sm'
+                className='nodrag rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-bold uppercase shadow-[2px_2px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#1A1A1A] disabled:opacity-50'
                 disabled={data.busy}
                 onClick={data.onCancel}>
                 Cancel
-              </Button>
+              </button>
             ) : null}
-            <Button
+            <button
               type='button'
-              variant='outline'
-              className='nodrag h-8 px-4 text-sm'
+              className='nodrag rounded-lg border-2 border-black bg-[#1A1A1A] px-3 py-1 text-xs font-bold uppercase text-[#C084FC] shadow-[2px_2px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#4A4A4A] disabled:opacity-50'
               disabled={data.busy}
               onClick={data.onRetry}>
               {data.busy ? 'Generating...' : 'Retry'}
-            </Button>
+            </button>
           </div>
         ) : (
-          <Button
+          <button
             type='button'
-            variant='outline'
-            className='nodrag h-8 px-4 text-sm'
+            className='nodrag rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-bold uppercase shadow-[2px_2px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#1A1A1A] disabled:opacity-50'
             disabled={data.busy}
             onClick={data.onEdit}>
             {data.busy ? 'Generating...' : 'Edit'}
-          </Button>
+          </button>
         )}
       </div>
 
-      {data.error ? (
-        <p className='mb-3 text-xs text-destructive'>{data.error}</p>
-      ) : null}
+      <div className='p-4'>
+        {data.error ? (
+          <p className='mb-3 rounded-lg border-2 border-black bg-[#FF6B6B]/20 px-3 py-2 font-mono text-xs text-[#FF6B6B]'>
+            {data.error}
+          </p>
+        ) : null}
 
-      {data.mode === 'picked' && selected ? (
-        <button
-          type='button'
-          className='nodrag block w-full overflow-hidden rounded-2xl border-2 border-emerald-500 bg-background p-2 text-left'
-          disabled={data.busy}
-          onClick={data.onEdit}>
-          <img
-            src={resolveImageSrc(
-              selected.id,
-              selected.imageUrl || selected.imageDataUrl || '',
-            )}
-            alt={`${displayName} selected design`}
-            className='aspect-square w-full rounded-xl object-cover'
-            onError={() => {
-              queueImageRetry(
+        {data.mode === 'picked' && selected ? (
+          <button
+            type='button'
+            className='nodrag block w-full overflow-hidden rounded-2xl border-2 border-black bg-[#F7F4EC] p-2 shadow-[3px_3px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#1A1A1A]'
+            disabled={data.busy}
+            onClick={data.onEdit}>
+            <img
+              src={resolveImageSrc(
                 selected.id,
                 selected.imageUrl || selected.imageDataUrl || '',
-              );
-            }}
-          />
-        </button>
-      ) : (
-        <div className='grid grid-cols-3 items-start gap-4'>
-          {data.options.map((option) => {
-            const isSelected = option.id === data.selectedOptionId;
+              )}
+              alt={`${displayName} selected design`}
+              className='aspect-square w-full rounded-xl object-cover'
+              onError={() => {
+                queueImageRetry(
+                  selected.id,
+                  selected.imageUrl || selected.imageDataUrl || '',
+                );
+              }}
+            />
+          </button>
+        ) : (
+          <div className='grid grid-cols-3 items-start gap-4'>
+            {data.options.map((option) => {
+              const isSelected = option.id === data.selectedOptionId;
 
-            return (
-              <button
-                key={option.id}
-                type='button'
-                disabled={data.busy}
-                className={`nodrag overflow-hidden rounded-2xl border-2 bg-background p-1 transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                  isSelected
-                    ? 'border-emerald-500'
-                    : 'border-emerald-400/60 hover:border-emerald-500'
-                }`}
-                onClick={() => data.onPick(option.id)}>
-                <img
-                  src={resolveImageSrc(
-                    option.id,
-                    option.imageUrl || option.imageDataUrl || '',
-                  )}
-                  alt={`${displayName} design option`}
-                  className='aspect-square w-full rounded-xl object-cover'
-                  onError={() => {
-                    queueImageRetry(
+              return (
+                <button
+                  key={option.id}
+                  type='button'
+                  disabled={data.busy}
+                  className={`nodrag overflow-hidden rounded-2xl border-2 border-black bg-[#F7F4EC] p-1 transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    isSelected
+                      ? 'shadow-[0px_0px_0_#1A1A1A] translate-x-0.5 translate-y-0.5'
+                      : 'shadow-[3px_3px_0_#1A1A1A] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#1A1A1A]'
+                  }`}
+                  onClick={() => data.onPick(option.id)}>
+                  {isSelected ? (
+                    <div className='absolute -right-1 -top-1 rounded-full border-2 border-black bg-[#C084FC] px-1.5 py-0.5 font-mono text-[10px] font-black'>
+                      ✓
+                    </div>
+                  ) : null}
+                  <img
+                    src={resolveImageSrc(
                       option.id,
                       option.imageUrl || option.imageDataUrl || '',
-                    );
-                  }}
-                />
-              </button>
-            );
-          })}
-        </div>
-      )}
+                    )}
+                    alt={`${displayName} design option`}
+                    className='aspect-square w-full rounded-xl object-cover'
+                    onError={() => {
+                      queueImageRetry(
+                        option.id,
+                        option.imageUrl || option.imageDataUrl || '',
+                      );
+                    }}
+                  />
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-      {!data.options.length ? (
-        <p className='text-sm text-muted-foreground'>
-          {data.busy
-            ? 'Generating design options...'
-            : 'No design options yet. Use Retry to generate options.'}
-        </p>
-      ) : null}
-    </Card>
+        {!data.options.length ? (
+          <p className='font-mono text-sm text-muted-foreground'>
+            {data.busy
+              ? 'Generating design options...'
+              : 'No options yet. Use Retry to generate.'}
+          </p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -4995,34 +5024,49 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   }, [connected, micActive, stopMicCapture]);
 
   return (
-    <div className='h-screen w-screen bg-background p-6 text-foreground'>
-      <Card className='relative h-full w-full overflow-hidden rounded-4xl border-2 border-border'>
-        <div className='absolute left-6 top-6 z-10 flex items-center gap-2'>
-          <Badge variant='outline' className='bg-background px-4 py-2 text-sm'>
-            {projectName}
-          </Badge>
-          <Button variant='outline' onClick={() => navigate('/debug')}>
-            Debug Monitor
-          </Button>
+    <div className='h-screen w-screen bg-background p-4 text-foreground'>
+      <div
+        className='relative h-full w-full overflow-hidden rounded-2xl border-2 border-black shadow-[6px_6px_0_#1A1A1A]'
+        style={{ background: '#F7F4EC' }}>
+        {/* ── Top-left: project name + debug link ── */}
+        <div className='absolute left-5 top-5 z-10 flex items-center gap-2'>
+          <div className='rounded-xl border-2 border-black bg-[#FFE234] px-4 py-2 shadow-[3px_3px_0_#1A1A1A]'>
+            <span className='text-sm font-black uppercase tracking-wide'>
+              {projectName}
+            </span>
+          </div>
+          <button
+            type='button'
+            className='brut-shadow-hover rounded-xl border-2 border-black bg-white px-3 py-2 text-xs font-bold uppercase tracking-wide shadow-[2px_2px_0_#1A1A1A] hover:bg-[#EDEAD9]'
+            onClick={() => navigate('/debug')}>
+            Debug
+          </button>
         </div>
 
-        <div className='absolute right-6 top-6 z-10'>
-          <Button variant='outline' size='icon' className='rounded-full'>
+        {/* ── Top-right: user + debug overlay ── */}
+        <div className='absolute right-5 top-5 z-10 flex flex-col items-end gap-2'>
+          <button
+            type='button'
+            className='flex h-10 w-10 items-center justify-center rounded-full border-2 border-black bg-white shadow-[2px_2px_0_#1A1A1A] hover:bg-[#EDEAD9]'>
             <User className='h-5 w-5' />
-          </Button>
-          <p className='mt-1 text-right text-xs text-muted-foreground'>
+          </button>
+          <p className='font-mono text-right text-[11px] text-muted-foreground'>
             {userName || 'profile'}
           </p>
 
           {debugOverlayEnabled ? (
-            <div className='mt-2 space-y-2'>
-              <Badge variant='outline'>voice: {voiceState}</Badge>
-              <label className='flex items-center justify-end gap-2 text-xs text-muted-foreground'>
-                <span>loopback audio</span>
+            <div className='flex flex-col items-end gap-2'>
+              <div
+                className={`rounded-lg border-2 border-black px-2.5 py-1 text-xs font-bold uppercase shadow-[2px_2px_0_#1A1A1A] ${voiceState === 'active' ? 'bg-[#CCFF00]' : 'bg-white'}`}>
+                voice: {voiceState}
+              </div>
+              <label className='flex items-center justify-end gap-2 font-mono text-xs text-muted-foreground'>
+                <span>loopback</span>
                 <input
                   type='checkbox'
                   checked={loopbackEnabled}
                   onChange={(event) => setLoopbackEnabled(event.target.checked)}
+                  className='accent-[#1A1A1A]'
                 />
               </label>
             </div>
@@ -5047,102 +5091,121 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             maxZoom: 0.72,
             padding: 0.2,
           }}
-          className='bg-background'>
-          <MiniMap pannable zoomable />
-          <Controls />
-          <Background gap={24} size={1} />
+          style={{ background: '#F7F4EC' }}>
+          <MiniMap
+            pannable
+            zoomable
+            className='!rounded-xl !border-2 !border-black !shadow-[3px_3px_0_#1A1A1A]'
+          />
+          <Controls className='!rounded-xl !border-2 !border-black !shadow-[3px_3px_0_#1A1A1A] !bottom-5 !left-5' />
+          <Background gap={24} size={1} color='#D4D0C4' />
         </ReactFlow>
 
-        <div className='absolute bottom-6 left-1/2 z-10 w-full max-w-xl -translate-x-1/2 px-6'>
+        {/* ── Bottom: caption + mic controls ── */}
+        <div className='absolute bottom-5 left-1/2 z-10 w-full max-w-xl -translate-x-1/2 px-4'>
           {ccEnabled && captionLines.length > 0 ? (
-            <Card className='mb-3 border border-border bg-card/95 p-3'>
-              <div className='space-y-1 text-xs'>
+            <div className='mb-3 rounded-xl border-2 border-black bg-white/95 p-3 shadow-[3px_3px_0_#1A1A1A]'>
+              <div className='space-y-1'>
                 {captionLines.map((line, index) => (
                   <p
                     key={`${line.speaker}-${index}-${line.text}`}
-                    className='text-muted-foreground'>
-                    <span className='font-medium text-foreground'>
+                    className='font-mono text-xs text-muted-foreground'>
+                    <span className='font-bold text-foreground'>
                       {line.speaker}:
                     </span>{' '}
                     {line.text}
                   </p>
                 ))}
               </div>
-            </Card>
-          ) : null}
-
-          <div className='flex items-center justify-center gap-2'>
-            <Button
-              variant={ccEnabled ? 'default' : 'outline'}
-              className='rounded-2xl'
-              onClick={() => setCcEnabled((value) => !value)}>
-              {ccEnabled ? (
-                <Captions className='mr-2 h-4 w-4' />
-              ) : (
-                <CaptionsOff className='mr-2 h-4 w-4' />
-              )}
-              CC
-            </Button>
-
-            <Button
-              variant={micActive ? 'default' : 'outline'}
-              className='min-w-28 rounded-2xl'
-              onClick={() => void toggleMic()}>
-              {micActive ? (
-                <Mic className='mr-2 h-4 w-4' />
-              ) : (
-                <MicOff className='mr-2 h-4 w-4' />
-              )}
-              Mic
-            </Button>
-          </div>
-          {showInterruptedBadge ? (
-            <div className='mt-1 flex justify-center'>
-              <Badge variant='outline'>Leo interrupted</Badge>
             </div>
           ) : null}
-          <p className='mt-1 text-center text-xs text-muted-foreground'>
-            {socketStatus}
-          </p>
-          <p className='mt-1 text-center text-xs text-muted-foreground'>
-            chunks sent: {sentChunks} • backend ingested: {ingestedChunks}
-          </p>
-          {debugOverlayEnabled ? (
-            <div className='mt-3 flex items-center gap-2'>
-              <input
-                type='text'
-                value={debugTextInput}
-                onChange={(event) => setDebugTextInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    sendDebugTextInput();
+
+          <div className='rounded-2xl border-2 border-black bg-white px-4 py-3 shadow-[4px_4px_0_#1A1A1A]'>
+            <div className='flex items-center justify-center gap-3'>
+              <button
+                type='button'
+                className={`brut-shadow-hover flex items-center gap-2 rounded-xl border-2 border-black px-4 py-2 text-sm font-bold uppercase shadow-[2px_2px_0_#1A1A1A] transition ${
+                  ccEnabled ? 'bg-[#FFE234]' : 'bg-white hover:bg-[#EDEAD9]'
+                }`}
+                onClick={() => setCcEnabled((value) => !value)}>
+                {ccEnabled ? (
+                  <Captions className='h-4 w-4' />
+                ) : (
+                  <CaptionsOff className='h-4 w-4' />
+                )}
+                CC
+              </button>
+
+              <button
+                type='button'
+                className={`brut-shadow-hover flex min-w-28 items-center justify-center gap-2 rounded-xl border-2 border-black px-5 py-2 text-sm font-bold uppercase shadow-[2px_2px_0_#1A1A1A] transition ${
+                  micActive ? 'bg-[#CCFF00]' : 'bg-white hover:bg-[#EDEAD9]'
+                }`}
+                onClick={() => void toggleMic()}>
+                {micActive ? (
+                  <Mic className='h-4 w-4' />
+                ) : (
+                  <MicOff className='h-4 w-4' />
+                )}
+                {micActive ? 'Mic On' : 'Mic'}
+              </button>
+            </div>
+
+            {showInterruptedBadge ? (
+              <div className='mt-2 flex justify-center'>
+                <span className='rounded-md border-2 border-black bg-[#FF6B6B] px-3 py-0.5 font-mono text-xs font-bold'>
+                  Leo interrupted
+                </span>
+              </div>
+            ) : null}
+
+            <p className='mt-2 text-center font-mono text-[11px] text-muted-foreground'>
+              {socketStatus}
+            </p>
+            <p className='mt-0.5 text-center font-mono text-[11px] text-muted-foreground'>
+              sent: {sentChunks} · ingested: {ingestedChunks}
+            </p>
+
+            {debugOverlayEnabled ? (
+              <div className='mt-3 flex items-center gap-2'>
+                <input
+                  type='text'
+                  value={debugTextInput}
+                  onChange={(event) => setDebugTextInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      sendDebugTextInput();
+                    }
+                  }}
+                  placeholder='Debug: type instead of talking'
+                  className='nowheel nopan h-9 flex-1 rounded-lg border-2 border-black bg-[#F7F4EC] px-3 font-mono text-xs outline-none focus:ring-2 focus:ring-black'
+                />
+                <button
+                  type='button'
+                  className='brut-shadow-hover h-9 rounded-lg border-2 border-black bg-[#FFE234] px-3 font-mono text-xs font-bold shadow-[2px_2px_0_#1A1A1A] disabled:opacity-50'
+                  disabled={
+                    !debugTextInput.trim() || !connected || !socketReady
                   }
-                }}
-                placeholder='Debug: type instead of talking'
-                className='nowheel nopan h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm'
-              />
-              <Button
-                variant='outline'
-                className='h-9 rounded-md'
-                disabled={!debugTextInput.trim() || !connected || !socketReady}
-                onClick={sendDebugTextInput}>
-                Send
-              </Button>
-            </div>
-          ) : null}
-          {!micActive ? (
-            <p className='mt-1 text-center text-xs text-muted-foreground'>
-              Hold Space to push-to-talk
-            </p>
-          ) : null}
-          {micError ? (
-            <p className='mt-1 text-center text-xs text-muted-foreground'>
-              {micError}
-            </p>
-          ) : null}
+                  onClick={sendDebugTextInput}>
+                  Send
+                </button>
+              </div>
+            ) : null}
+
+            {!micActive ? (
+              <p className='mt-1 text-center font-mono text-[11px] text-muted-foreground'>
+                Hold Space to push-to-talk
+              </p>
+            ) : null}
+            {micError ? (
+              <p className='mt-1 text-center font-mono text-[11px] text-[#FF6B6B]'>
+                {micError}
+              </p>
+            ) : null}
+          </div>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

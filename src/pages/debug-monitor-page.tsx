@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthGate } from '@/components/auth-gate';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 
 type MonitorSession = {
   id: string;
@@ -303,144 +300,195 @@ function DebugMonitorView() {
   if (loading && !monitor) {
     return (
       <div className='flex h-screen w-screen items-center justify-center bg-background p-6 text-foreground'>
-        <Card className='p-6'>
-          <p className='text-sm font-medium'>Loading debug monitor...</p>
-        </Card>
+        <div className='rounded-2xl border-2 border-black bg-[#FFE234] px-8 py-6 shadow-[5px_5px_0_#1A1A1A]'>
+          <p className='text-base font-bold uppercase tracking-widest'>
+            Loading debug monitor...
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className='min-h-screen w-full bg-background p-6 text-foreground'>
-      <div className='mx-auto w-full max-w-6xl space-y-4'>
-        <div className='flex items-center justify-between'>
-          <div className='flex items-center gap-2'>
-            <Badge variant='outline'>Debug Monitor</Badge>
-            <Badge variant='outline'>
+      <div className='mx-auto w-full max-w-6xl space-y-5'>
+        {/* ── Top bar ── */}
+        <div className='flex items-center justify-between gap-4'>
+          <div className='flex items-center gap-3'>
+            <div className='rounded-xl border-2 border-black bg-[#FFE234] px-4 py-2 shadow-[3px_3px_0_#1A1A1A]'>
+              <span className='text-sm font-black uppercase tracking-widest'>
+                Debug Monitor
+              </span>
+            </div>
+            <div
+              className={`rounded-lg border-2 border-black px-3 py-1.5 text-xs font-bold uppercase tracking-wide shadow-[2px_2px_0_#1A1A1A] ${monitor?.enabled ? 'bg-[#CCFF00]' : 'bg-[#EDEAD9]'}`}>
               {monitor?.enabled ? 'enabled' : 'disabled'}
-            </Badge>
-            {refreshing ? <Badge variant='outline'>refreshing</Badge> : null}
+            </div>
+            {refreshing ? (
+              <div className='rounded-lg border-2 border-black bg-[#4ECDC4] px-3 py-1.5 text-xs font-bold uppercase tracking-wide shadow-[2px_2px_0_#1A1A1A]'>
+                refreshing
+              </div>
+            ) : null}
           </div>
 
           <div className='flex items-center gap-2'>
-            <Button variant='outline' onClick={() => navigate('/')}>
-              Back to Canvas
-            </Button>
-            <Button onClick={() => void loadData(true)}>Refresh</Button>
+            <button
+              type='button'
+              className='brut-shadow-hover rounded-xl border-2 border-black bg-white px-4 py-2 text-sm font-bold uppercase tracking-wide shadow-[3px_3px_0_#1A1A1A] hover:bg-[#EDEAD9]'
+              onClick={() => navigate('/')}>
+              ← Canvas
+            </button>
+            <button
+              type='button'
+              className='brut-shadow-hover rounded-xl border-2 border-black bg-[#1A1A1A] px-4 py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A]'
+              onClick={() => void loadData(true)}>
+              Refresh ↺
+            </button>
           </div>
         </div>
 
+        {/* ── Error banner ── */}
         {error ? (
-          <Card className='p-4'>
-            <p className='text-sm font-medium'>Failed to load monitor</p>
-            <p className='mt-1 text-xs text-muted-foreground'>{error}</p>
-          </Card>
+          <div className='rounded-xl border-2 border-black bg-[#FF6B6B] px-5 py-4 shadow-[3px_3px_0_#1A1A1A]'>
+            <p className='text-sm font-bold'>Failed to load monitor</p>
+            <p className='mt-1 font-mono text-xs'>{error}</p>
+          </div>
         ) : null}
 
-        <div className='grid grid-cols-1 gap-3 md:grid-cols-4'>
-          <Card className='p-4'>
-            <p className='text-xs text-muted-foreground'>Provider</p>
-            <p className='mt-1 text-sm font-medium'>
-              {monitor?.provider ?? '-'}
+        {/* ── 4 stat cards ── */}
+        <div className='grid grid-cols-1 gap-4 md:grid-cols-4'>
+          <div className='rounded-xl border-2 border-black bg-[#FFE234] p-4 shadow-[4px_4px_0_#1A1A1A]'>
+            <p className='text-xs font-bold uppercase tracking-widest text-black/60'>
+              Provider
             </p>
-          </Card>
-          <Card className='p-4'>
-            <p className='text-xs text-muted-foreground'>Active Sessions</p>
-            <p className='mt-1 text-sm font-medium'>
-              {monitor?.activeSessions ?? 0} / {monitor?.totalSessions ?? 0}
-            </p>
-          </Card>
-          <Card className='p-4'>
-            <p className='text-xs text-muted-foreground'>Active Agents</p>
-            <p className='mt-1 text-sm font-medium'>
-              {totals.activeAgentCount}
-            </p>
-          </Card>
-          <Card className='p-4'>
-            <p className='text-xs text-muted-foreground'>
-              Generated Text Chars
-            </p>
-            <p className='mt-1 text-sm font-medium'>
-              {totals.generatedTextChars}
-            </p>
-          </Card>
-        </div>
-
-        <Card className='p-4'>
-          <div className='flex items-center justify-between'>
-            <p className='text-sm font-medium'>Sessions</p>
-            <p className='text-xs text-muted-foreground'>
-              model: {monitor?.model ?? '-'}
+            <p className='mt-1 text-2xl font-black'>
+              {monitor?.provider ?? '—'}
             </p>
           </div>
-          <div className='mt-3 space-y-2'>
+          <div className='rounded-xl border-2 border-black bg-[#FF6B6B] p-4 shadow-[4px_4px_0_#1A1A1A]'>
+            <p className='text-xs font-bold uppercase tracking-widest text-black/60'>
+              Active Sessions
+            </p>
+            <p className='mt-1 text-2xl font-black'>
+              {monitor?.activeSessions ?? 0}{' '}
+              <span className='text-base font-bold text-black/50'>
+                / {monitor?.totalSessions ?? 0}
+              </span>
+            </p>
+          </div>
+          <div className='rounded-xl border-2 border-black bg-[#4ECDC4] p-4 shadow-[4px_4px_0_#1A1A1A]'>
+            <p className='text-xs font-bold uppercase tracking-widest text-black/60'>
+              Active Agents
+            </p>
+            <p className='mt-1 text-2xl font-black'>
+              {totals.activeAgentCount}
+            </p>
+          </div>
+          <div className='rounded-xl border-2 border-black bg-[#CCFF00] p-4 shadow-[4px_4px_0_#1A1A1A]'>
+            <p className='text-xs font-bold uppercase tracking-widest text-black/60'>
+              Generated Chars
+            </p>
+            <p className='mt-1 text-2xl font-black'>
+              {totals.generatedTextChars.toLocaleString()}
+            </p>
+          </div>
+        </div>
+
+        {/* ── Sessions ── */}
+        <div className='rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+          <div className='flex items-center justify-between border-b-2 border-black px-5 py-3'>
+            <p className='text-sm font-black uppercase tracking-widest'>
+              Sessions
+            </p>
+            <p className='font-mono text-xs text-muted-foreground'>
+              model: {monitor?.model ?? '—'}
+            </p>
+          </div>
+          <div className='space-y-2 p-4'>
+            {(monitor?.sessions ?? []).length === 0 ? (
+              <p className='font-mono text-xs text-muted-foreground'>
+                no sessions
+              </p>
+            ) : null}
             {(monitor?.sessions ?? []).map((session) => (
               <div
                 key={session.id}
-                className='rounded-lg border border-border bg-card p-3'>
+                className={`rounded-xl border-2 border-black p-3 ${session.status === 'active' ? 'bg-[#CCFF00]/30' : 'bg-[#EDEAD9]'}`}>
                 <div className='flex flex-wrap items-center gap-2'>
-                  <Badge variant='outline'>{session.status}</Badge>
-                  <Badge variant='outline'>voice: {session.voiceState}</Badge>
-                  <Badge variant='outline'>{session.id}</Badge>
-                  <span className='text-xs text-muted-foreground'>
+                  <span
+                    className={`rounded-md border-2 border-black px-2 py-0.5 text-xs font-bold uppercase ${session.status === 'active' ? 'bg-[#CCFF00]' : 'bg-white'}`}>
+                    {session.status}
+                  </span>
+                  <span className='rounded-md border border-black/40 bg-white px-2 py-0.5 font-mono text-xs'>
+                    voice: {session.voiceState}
+                  </span>
+                  <span className='font-mono text-xs text-muted-foreground'>
+                    {session.id}
+                  </span>
+                  <span className='font-mono text-xs text-muted-foreground'>
                     user: {session.userId}
                   </span>
-                  <span className='text-xs text-muted-foreground'>
+                  <span className='font-mono text-xs text-muted-foreground'>
                     project: {session.projectId ?? 'none'}
                   </span>
                 </div>
-                <p className='mt-2 text-xs text-muted-foreground'>
+                <p className='mt-2 font-mono text-xs text-muted-foreground'>
                   recv: {session.actionsReceived} • sent: {session.actionsSent}{' '}
-                  • gemini: {session.geminiMessages} • text chars:{' '}
+                  • gemini: {session.geminiMessages} • chars:{' '}
                   {session.generatedTextChars}
                 </p>
                 {session.lastVoiceActivityAt ? (
-                  <p className='mt-1 text-xs text-muted-foreground'>
-                    last voice activity:{' '}
+                  <p className='mt-1 font-mono text-xs text-muted-foreground'>
+                    voice:{' '}
                     {new Date(session.lastVoiceActivityAt).toLocaleTimeString()}
                   </p>
                 ) : null}
                 {session.activeAgents.length ? (
-                  <p className='mt-1 text-xs text-muted-foreground'>
+                  <p className='mt-1 font-mono text-xs text-muted-foreground'>
                     agents: {session.activeAgents.join(', ')}
                   </p>
                 ) : null}
                 {session.generatedTextLast ? (
-                  <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
-                    last text: {session.generatedTextLast}
+                  <p className='mt-1 line-clamp-2 font-mono text-xs text-muted-foreground'>
+                    ↳ {session.generatedTextLast}
                   </p>
                 ) : null}
               </div>
             ))}
           </div>
-        </Card>
+        </div>
 
-        <Card className='p-4'>
-          <div className='flex items-center justify-between'>
-            <p className='text-sm font-medium'>Recent Events</p>
-            <div className='flex flex-wrap items-center gap-3 text-xs text-muted-foreground'>
-              <label className='flex items-center gap-1'>
+        {/* ── Recent Events ── */}
+        <div className='rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+          <div className='flex flex-wrap items-center justify-between gap-3 border-b-2 border-black px-5 py-3'>
+            <p className='text-sm font-black uppercase tracking-widest'>
+              Recent Events
+            </p>
+            <div className='flex flex-wrap items-center gap-4 font-mono text-xs text-muted-foreground'>
+              <label className='flex cursor-pointer items-center gap-1.5'>
                 <input
                   type='checkbox'
                   checked={importantOnly}
                   onChange={(event) => setImportantOnly(event.target.checked)}
+                  className='accent-[#1A1A1A]'
                 />
                 important only
               </label>
-              <label className='flex items-center gap-1'>
+              <label className='flex cursor-pointer items-center gap-1.5'>
                 <input
                   type='checkbox'
                   checked={includeAudioNoise}
                   onChange={(event) =>
                     setIncludeAudioNoise(event.target.checked)
                   }
+                  className='accent-[#1A1A1A]'
                 />
-                include audio chunk noise
+                audio noise
               </label>
               <label htmlFor='eventLimit'>limit</label>
               <select
                 id='eventLimit'
-                className='rounded border border-border bg-background px-2 py-1'
+                className='rounded-md border-2 border-black bg-[#EDEAD9] px-2 py-1 font-mono text-xs'
                 value={limit}
                 onChange={(event) => setLimit(Number(event.target.value))}>
                 <option value={50}>50</option>
@@ -450,32 +498,27 @@ function DebugMonitorView() {
             </div>
           </div>
 
-          <div className='mt-3 max-h-[45vh] space-y-2 overflow-auto'>
+          <div className='max-h-[45vh] space-y-2 overflow-auto p-4'>
             {sortedEvents.length === 0 ? (
-              <p className='text-xs text-muted-foreground'>
-                No events in the current filter.
+              <p className='font-mono text-xs text-muted-foreground'>
+                No events in current filter.
               </p>
             ) : null}
 
             {sortedEvents.map((event) => (
               <div
                 key={event.id}
-                className='rounded-lg border border-border p-3'>
+                className={`rounded-xl border-2 border-black p-3 ${isErrorLikeEvent(event) ? 'bg-[#FF6B6B]/20' : 'bg-[#F7F4EC]'}`}>
                 <div className='flex flex-wrap items-center gap-2'>
-                  <Badge
-                    variant='outline'
-                    className={
-                      isErrorLikeEvent(event)
-                        ? 'border-red-500/50 text-red-600'
-                        : undefined
-                    }>
+                  <span
+                    className={`rounded-md border-2 border-black px-2 py-0.5 font-mono text-xs font-bold ${isErrorLikeEvent(event) ? 'bg-[#FF6B6B] text-black' : 'bg-[#FFE234]'}`}>
                     {formatEventLabel(event)}
-                  </Badge>
-                  <span className='text-xs text-muted-foreground'>
+                  </span>
+                  <span className='font-mono text-xs text-muted-foreground'>
                     {formatDateTime(event.at)}
                   </span>
                   {event.sessionId ? (
-                    <span className='text-xs text-muted-foreground'>
+                    <span className='font-mono text-xs text-muted-foreground'>
                       session: {event.sessionId}
                     </span>
                   ) : null}
@@ -488,20 +531,20 @@ function DebugMonitorView() {
 
                   return (
                     <div className='mt-2'>
-                      <p className='mb-2 text-xs text-muted-foreground'>
+                      <p className='mb-2 font-mono text-xs text-muted-foreground'>
                         attachments ({attachments.length})
                       </p>
                       <div className='grid grid-cols-1 gap-2 md:grid-cols-2'>
                         {attachments.map((attachment, index) => (
                           <div
                             key={`${event.id}-img-${index}`}
-                            className='rounded border border-border bg-muted/30 p-2'>
+                            className='rounded-lg border-2 border-black bg-[#EDEAD9] p-2'>
                             <img
                               src={attachment.dataUrl}
                               alt={`Debug attachment ${index + 1}`}
-                              className='max-h-56 w-full rounded object-contain'
+                              className='max-h-56 w-full rounded-md object-contain'
                             />
-                            <p className='mt-1 text-[11px] text-muted-foreground'>
+                            <p className='mt-1 font-mono text-[11px] text-muted-foreground'>
                               {attachment.mimeType}
                               {typeof attachment.bytesApprox === 'number'
                                 ? ` • ~${attachment.bytesApprox} bytes`
@@ -514,63 +557,84 @@ function DebugMonitorView() {
                   );
                 })()}
                 <details className='mt-2'>
-                  <summary className='cursor-pointer text-xs text-muted-foreground'>
-                    show detail
+                  <summary className='cursor-pointer font-mono text-xs text-muted-foreground hover:text-foreground'>
+                    ▸ show detail
                   </summary>
-                  <pre className='mt-2 overflow-x-auto whitespace-pre-wrap wrap-break-word rounded bg-muted p-2 text-xs text-muted-foreground'>
+                  <pre className='mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-black/20 bg-[#1A1A1A] p-3 font-mono text-xs text-[#CCFF00]'>
                     {JSON.stringify(event.detail, null, 2)}
                   </pre>
                 </details>
               </div>
             ))}
           </div>
-        </Card>
+        </div>
 
-        <Card className='p-4'>
-          <div className='flex items-center justify-between'>
-            <p className='text-sm font-medium'>Database Snapshot</p>
-            <p className='text-xs text-muted-foreground'>
+        {/* ── Database Snapshot ── */}
+        <div className='rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+          <div className='flex items-center justify-between border-b-2 border-black px-5 py-3'>
+            <p className='text-sm font-black uppercase tracking-widest'>
+              Database Snapshot
+            </p>
+            <p className='font-mono text-xs text-muted-foreground'>
               refreshed: {formatDateTime(dbSnapshot?.snapshotAt)}
             </p>
           </div>
 
-          <div className='mt-3 grid grid-cols-2 gap-2 md:grid-cols-5'>
-            {Object.entries(dbSnapshot?.counts ?? {}).map(([name, count]) => (
-              <div
-                key={name}
-                className='rounded border border-border bg-card p-2'>
-                <p className='text-xs text-muted-foreground'>{name}</p>
-                <p className='text-sm font-medium'>{count}</p>
-              </div>
-            ))}
-          </div>
+          <div className='p-4'>
+            <div className='grid grid-cols-2 gap-2 md:grid-cols-5'>
+              {Object.entries(dbSnapshot?.counts ?? {}).map(
+                ([name, count], i) => {
+                  const colors = [
+                    'bg-[#FFE234]',
+                    'bg-[#4ECDC4]',
+                    'bg-[#FF6B6B]',
+                    'bg-[#CCFF00]',
+                    'bg-[#C084FC]',
+                  ];
+                  const bg = colors[i % colors.length];
+                  return (
+                    <div
+                      key={name}
+                      className={`rounded-xl border-2 border-black p-2.5 shadow-[2px_2px_0_#1A1A1A] ${bg}`}>
+                      <p className='font-mono text-xs font-bold text-black/60'>
+                        {name}
+                      </p>
+                      <p className='text-lg font-black'>{count}</p>
+                    </div>
+                  );
+                },
+              )}
+            </div>
 
-          <div className='mt-3 flex flex-wrap items-center gap-2 text-xs'>
-            <label htmlFor='dbCollection' className='text-muted-foreground'>
-              collection
-            </label>
-            <select
-              id='dbCollection'
-              className='rounded border border-border bg-background px-2 py-1'
-              value={activeDbCollection}
-              onChange={(event) => setActiveDbCollection(event.target.value)}>
-              {dbCollectionNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-            <span className='text-muted-foreground'>
-              rows: {activeDbRows.length}
-            </span>
-          </div>
+            <div className='mt-4 flex flex-wrap items-center gap-3 font-mono text-xs'>
+              <label
+                htmlFor='dbCollection'
+                className='font-bold text-muted-foreground'>
+                collection
+              </label>
+              <select
+                id='dbCollection'
+                className='rounded-lg border-2 border-black bg-[#EDEAD9] px-2 py-1 font-mono text-xs'
+                value={activeDbCollection}
+                onChange={(event) => setActiveDbCollection(event.target.value)}>
+                {dbCollectionNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <span className='text-muted-foreground'>
+                rows: {activeDbRows.length}
+              </span>
+            </div>
 
-          <div className='mt-3 max-h-[45vh] overflow-auto rounded border border-border bg-muted p-3'>
-            <pre className='whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground'>
-              {JSON.stringify(activeDbRows, null, 2)}
-            </pre>
+            <div className='mt-3 max-h-[45vh] overflow-auto rounded-xl border-2 border-black bg-[#1A1A1A] p-4'>
+              <pre className='whitespace-pre-wrap break-words font-mono text-xs text-[#CCFF00]'>
+                {JSON.stringify(activeDbRows, null, 2)}
+              </pre>
+            </div>
           </div>
-        </Card>
+        </div>
       </div>
     </div>
   );
