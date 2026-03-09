@@ -2310,9 +2310,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [micError, setMicError] = useState('');
   const [connected, setConnected] = useState(false);
   const [socketReady, setSocketReady] = useState(false);
-  const [socketStatus, setSocketStatus] = useState(
-    'connecting voice socket...',
-  );
+  const [, setSocketStatus] = useState('connecting voice socket...');
   const [sentChunks, setSentChunks] = useState(0);
   const [ingestedChunks, setIngestedChunks] = useState(0);
   const [debugOverlayEnabled, setDebugOverlayEnabled] = useState(false);
@@ -2396,98 +2394,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const micStartingRef = useRef(false);
   const pttHeldRef = useRef(false);
   const pttMicActivatedRef = useRef(false);
-  const statusSpeechQueueRef = useRef<string[]>([]);
-  const statusSpeechSpeakingRef = useRef(false);
-  const statusSpeechLastRef = useRef<{
-    message: string;
-    at: number;
-  } | null>(null);
-
-  const drainStatusSpeechQueue = useCallback(() => {
-    if (statusSpeechSpeakingRef.current) {
-      return;
-    }
-
-    if (
-      typeof window === 'undefined' ||
-      typeof window.SpeechSynthesisUtterance !== 'function' ||
-      !('speechSynthesis' in window)
-    ) {
-      statusSpeechQueueRef.current = [];
-      return;
-    }
-
-    const nextMessage = statusSpeechQueueRef.current.shift();
-    if (!nextMessage) {
-      return;
-    }
-
-    statusSpeechSpeakingRef.current = true;
-
-    const synth = window.speechSynthesis;
-    const utterance = new window.SpeechSynthesisUtterance(nextMessage);
-    const voices = synth.getVoices();
-    const preferredVoice =
-      voices.find(
-        (voice) =>
-          /en/i.test(voice.lang) && /(samantha|alex|google)/i.test(voice.name),
-      ) ?? voices.find((voice) => /en/i.test(voice.lang));
-
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
-    }
-
-    utterance.rate = 1;
-    utterance.pitch = 1;
-
-    utterance.onend = () => {
-      statusSpeechSpeakingRef.current = false;
-      drainStatusSpeechQueue();
-    };
-
-    utterance.onerror = () => {
-      statusSpeechSpeakingRef.current = false;
-      drainStatusSpeechQueue();
-    };
-
-    synth.speak(utterance);
-  }, []);
-
-  const queueStoryboardStatusSpeech = useCallback(
-    (message: string) => {
-      const trimmed = message.trim();
-      if (!trimmed) {
-        return;
-      }
-
-      const now = Date.now();
-      const lastSpoken = statusSpeechLastRef.current;
-      if (
-        lastSpoken &&
-        lastSpoken.message === trimmed &&
-        now - lastSpoken.at < 2500
-      ) {
-        return;
-      }
-
-      statusSpeechLastRef.current = {
-        message: trimmed,
-        at: now,
-      };
-
-      statusSpeechQueueRef.current.push(trimmed);
-      if (statusSpeechQueueRef.current.length > 8) {
-        statusSpeechQueueRef.current.splice(
-          0,
-          statusSpeechQueueRef.current.length - 8,
-        );
-      }
-
-      drainStatusSpeechQueue();
-    },
-    [drainStatusSpeechQueue],
-  );
-
   const clearPendingContextSwitchTimer = useCallback(() => {
     if (pendingContextSwitchTimerRef.current) {
       window.clearTimeout(pendingContextSwitchTimerRef.current);
@@ -3214,10 +3120,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
               sourceTool === 'update_storyboard') &&
             (!statusProjectId || statusProjectId === activeProjectIdRef.current)
           ) {
-            if (statusMessage) {
-              queueStoryboardStatusSpeech(statusMessage);
-            }
-
             const phase =
               payload && typeof payload.phase === 'string'
                 ? payload.phase.trim().toLowerCase()
@@ -3537,22 +3439,12 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         window.clearTimeout(timerId);
       }
       storyboardAutosaveTimers.clear();
-
-      statusSpeechQueueRef.current = [];
-      statusSpeechSpeakingRef.current = false;
-      if (
-        typeof window !== 'undefined' &&
-        typeof window.speechSynthesis !== 'undefined'
-      ) {
-        window.speechSynthesis.cancel();
-      }
     };
   }, [
     clearPendingContextSwitchTimer,
     flushPendingContextSwitch,
     interruptPlayback,
     notifyInterrupted,
-    queueStoryboardStatusSpeech,
     schedulePendingContextSwitchCheck,
   ]);
 
@@ -6017,9 +5909,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             ) : null}
 
             <p className='mt-2 text-center font-mono text-[11px] text-muted-foreground'>
-              {socketStatus}
-            </p>
-            <p className='mt-0.5 text-center font-mono text-[11px] text-muted-foreground'>
               sent: {sentChunks} · ingested: {ingestedChunks}
             </p>
 
