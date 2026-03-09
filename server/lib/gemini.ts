@@ -259,6 +259,7 @@ export async function connectGeminiLiveBridge(context: BridgeContext) {
                 [
                   'create_story_node',
                   'sync_story_node',
+                  'propose_story_rewrite',
                   'generate_character_brief',
                   'update_character_brief',
                   'generate_character_design',

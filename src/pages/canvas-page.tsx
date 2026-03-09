@@ -49,11 +49,50 @@ type CaptionLine = {
 
 const MIC_PROCESSOR_BUFFER_SIZE = 1024;
 
+type StoryRevisionRecord = {
+  id: string;
+  instruction: string;
+  selectionText: string;
+  selectionStart: number;
+  selectionEnd: number;
+  summary: string;
+  previousMarkdown: string;
+  nextMarkdown: string;
+  source?: string | null;
+  acceptedAt?: string;
+};
+
+type PendingStoryRewriteRecord = {
+  instruction?: string | null;
+  selectionText?: string | null;
+  selectionStart?: number | null;
+  selectionEnd?: number | null;
+  replacementText?: string | null;
+  markdown?: string | null;
+  summary?: string | null;
+  source?: string | null;
+  toolCallId?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
 type StoryRecord = {
   id: string;
   title: string;
   markdown: string;
   sourceDocUrl?: string | null;
+  pendingRewriteInstruction?: string | null;
+  pendingRewriteSelectionText?: string | null;
+  pendingRewriteSelectionStart?: number | null;
+  pendingRewriteSelectionEnd?: number | null;
+  pendingRewriteReplacementText?: string | null;
+  pendingRewriteMarkdown?: string | null;
+  pendingRewriteSummary?: string | null;
+  pendingRewriteSource?: string | null;
+  pendingRewriteToolCallId?: string | null;
+  pendingRewriteCreatedAt?: string | null;
+  pendingRewriteUpdatedAt?: string | null;
+  revisions?: StoryRevisionRecord[];
   positionX?: number | null;
   positionY?: number | null;
 };
@@ -131,6 +170,10 @@ type ProjectDetailsResponse = {
 type StoryImportResponse = {
   story?: StoryRecord;
   error?: string;
+  issues?: string[];
+  stale?: boolean;
+  proposal?: PendingStoryRewriteRecord;
+  revisionCount?: number;
 };
 
 type CharacterSaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -301,13 +344,27 @@ type StoryImportNodeData = {
   mode: StoryImportMode;
   markdownInput: string;
   googleDocUrl: string;
+  rewriteInstruction: string;
+  selectionText: string;
+  selectionStart: number;
+  selectionEnd: number;
+  pendingProposal: PendingStoryRewriteRecord | null;
+  revisions: StoryRevisionRecord[];
   busy: boolean;
+  rewriteBusy: boolean;
   status: string;
   error: string;
+  rewriteStatus: string;
+  rewriteError: string;
   onModeChange: (mode: StoryImportMode) => void;
   onMarkdownChange: (value: string) => void;
+  onSelectionChange: (start: number, end: number) => void;
   onGoogleDocUrlChange: (value: string) => void;
+  onRewriteInstructionChange: (value: string) => void;
   onFetchGoogleDocs: () => void;
+  onCreateRewrite: () => void;
+  onAcceptRewrite: () => void;
+  onRejectRewrite: () => void;
 };
 
 type CharacterCardNodeData = {
@@ -374,6 +431,34 @@ type StoryboardCardNodeData = {
   onFrameAdd: () => void;
 };
 
+function getPendingStoryRewrite(story?: StoryRecord | null) {
+  if (!story) {
+    return null;
+  }
+
+  if (
+    !story.pendingRewriteSelectionText ||
+    !story.pendingRewriteReplacementText ||
+    !story.pendingRewriteInstruction
+  ) {
+    return null;
+  }
+
+  return {
+    instruction: story.pendingRewriteInstruction,
+    selectionText: story.pendingRewriteSelectionText,
+    selectionStart: story.pendingRewriteSelectionStart,
+    selectionEnd: story.pendingRewriteSelectionEnd,
+    replacementText: story.pendingRewriteReplacementText,
+    markdown: story.pendingRewriteMarkdown,
+    summary: story.pendingRewriteSummary,
+    source: story.pendingRewriteSource,
+    toolCallId: story.pendingRewriteToolCallId,
+    createdAt: story.pendingRewriteCreatedAt,
+    updatedAt: story.pendingRewriteUpdatedAt,
+  } satisfies PendingStoryRewriteRecord;
+}
+
 type CanvasNodeData =
   | CreativeNodeData
   | StoryImportNodeData
@@ -438,11 +523,116 @@ function getProjectIdFromSearch(search: string) {
   return projectId?.trim() || '';
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function formatRewriteSourceLabel(source?: string | null) {
+  const normalized = source?.trim().toLowerCase() || '';
+  if (
+    normalized === 'agent_tool' ||
+    normalized === 'assistant' ||
+    normalized === 'voice' ||
+    normalized === 'voice_agent'
+  ) {
+    return 'Leo via voice';
+  }
+
+  if (normalized === 'story_node') {
+    return 'Inline request';
+  }
+
+  return 'Pending suggestion';
+}
+
+function getHighlightedStorySegments(input: {
+  text: string;
+  start?: number | null;
+  end?: number | null;
+}) {
+  const safeStart = clampNumber(input.start ?? 0, 0, input.text.length);
+  const safeEnd = clampNumber(
+    Math.max(input.end ?? safeStart, safeStart),
+    safeStart,
+    input.text.length,
+  );
+  const highlightText = input.text.slice(safeStart, safeEnd);
+
+  return {
+    before: input.text.slice(0, safeStart),
+    highlight: highlightText,
+    after: input.text.slice(safeEnd),
+  };
+}
+
+function readEditablePlainText(element: HTMLElement) {
+  const normalized = element.innerText.replace(/\u00a0/g, ' ');
+  // contentEditable can append a trailing newline while editing.
+  return normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
+}
+
+function getSelectionOffsetsWithin(element: HTMLElement) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  if (
+    !element.contains(range.startContainer) ||
+    !element.contains(range.endContainer)
+  ) {
+    return null;
+  }
+
+  const textNodes: globalThis.Text[] = [];
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let current: globalThis.Node | null = walker.nextNode();
+  while (current) {
+    textNodes.push(current as globalThis.Text);
+    current = walker.nextNode();
+  }
+
+  let offset = 0;
+  let start = 0;
+  let end = 0;
+
+  for (const textNode of textNodes) {
+    const textLength = textNode.textContent?.length ?? 0;
+
+    if (textNode === range.startContainer) {
+      start = offset + range.startOffset;
+    }
+
+    if (textNode === range.endContainer) {
+      end = offset + range.endOffset;
+      break;
+    }
+
+    offset += textLength;
+  }
+
+  return {
+    start: Math.max(0, start),
+    end: Math.max(0, end),
+  };
+}
+
 function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
   const nodeData = data;
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const pendingSelection = getHighlightedStorySegments({
+    text: nodeData.markdownInput,
+    start: nodeData.pendingProposal?.selectionStart,
+    end: nodeData.pendingProposal?.selectionEnd,
+  });
+  const selectionPreview = nodeData.selectionText.trim();
+  const sourceLabel = formatRewriteSourceLabel(
+    nodeData.pendingProposal?.source,
+  );
 
   return (
-    <div className='relative w-200 overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+    <div className='relative w-200 overflow-visible rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
       {nodeData.hasIncomingConnection ? (
         <>
           <Handle
@@ -505,14 +695,172 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
 
         {nodeData.mode === 'markdown' ? (
           <div className='space-y-3'>
-            <textarea
-              value={nodeData.markdownInput}
-              onChange={(event) =>
-                nodeData.onMarkdownChange(event.target.value)
-              }
-              placeholder='Paste your markdown story here...'
-              className='nodrag nowheel nopan h-64 w-full resize-y rounded-xl border-2 border-black bg-[#F7F4EC] px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-black'
-            />
+            <div className='relative overflow-visible'>
+              <div
+                ref={editorRef}
+                contentEditable
+                suppressContentEditableWarning
+                role='textbox'
+                aria-multiline='true'
+                onInput={(event) => {
+                  nodeData.onMarkdownChange(
+                    readEditablePlainText(event.currentTarget),
+                  );
+
+                  const nextSelection = getSelectionOffsetsWithin(
+                    event.currentTarget,
+                  );
+                  if (nextSelection) {
+                    nodeData.onSelectionChange(
+                      nextSelection.start,
+                      nextSelection.end,
+                    );
+                  }
+                }}
+                onKeyUp={(event) => {
+                  const nextSelection = getSelectionOffsetsWithin(
+                    event.currentTarget,
+                  );
+                  if (nextSelection) {
+                    nodeData.onSelectionChange(
+                      nextSelection.start,
+                      nextSelection.end,
+                    );
+                  }
+                }}
+                onMouseUp={(event) => {
+                  const nextSelection = getSelectionOffsetsWithin(
+                    event.currentTarget,
+                  );
+                  if (nextSelection) {
+                    nodeData.onSelectionChange(
+                      nextSelection.start,
+                      nextSelection.end,
+                    );
+                  }
+                }}
+                onPaste={(event) => {
+                  event.preventDefault();
+                  const text = event.clipboardData.getData('text/plain');
+                  const selection = window.getSelection();
+                  if (!selection || selection.rangeCount === 0) {
+                    return;
+                  }
+
+                  selection.deleteFromDocument();
+                  selection
+                    .getRangeAt(0)
+                    .insertNode(document.createTextNode(text));
+                  selection.collapseToEnd();
+                }}
+                className='nodrag nowheel nopan h-64 w-full overflow-y-auto rounded-xl border-2 border-black bg-[#F7F4EC] px-3 py-2 font-mono text-sm leading-6 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-black'>
+                {nodeData.pendingProposal ? (
+                  <>
+                    <span>{pendingSelection.before}</span>
+                    <span className='rounded-[0.35rem] bg-[#CCFF00]/45 shadow-[inset_0_-2px_0_#99B200]'>
+                      {pendingSelection.highlight || ' '}
+                    </span>
+                    <span>{pendingSelection.after}</span>
+                  </>
+                ) : (
+                  nodeData.markdownInput
+                )}
+              </div>
+            </div>
+
+            {nodeData.pendingProposal ? (
+              <div className='w-136 max-w-[calc(100vw-6rem)] rounded-2xl border-2 border-black bg-[#FCFFF0] p-4 shadow-[4px_4px_0_#1A1A1A]'>
+                <div className='flex items-center justify-between gap-3'>
+                  <div>
+                    <p className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+                      Inline Rewrite
+                    </p>
+                    <p className='text-sm font-bold text-foreground'>
+                      {nodeData.pendingProposal.summary || 'Pending suggestion'}
+                    </p>
+                  </div>
+                  <span className='rounded-full border border-black/20 bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-black/60'>
+                    {sourceLabel}
+                  </span>
+                </div>
+
+                <div className='mt-3 space-y-2'>
+                  <div className='rounded-lg border border-black/15 bg-white px-3 py-2'>
+                    <p className='mb-1 font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+                      Replace
+                    </p>
+                    <div className='whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/80'>
+                      {nodeData.pendingProposal.selectionText}
+                    </div>
+                  </div>
+                  <div className='rounded-lg border border-black/15 bg-[#F4FFD0] px-3 py-2'>
+                    <p className='mb-1 font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+                      With
+                    </p>
+                    <div className='whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/80'>
+                      {nodeData.pendingProposal.replacementText}
+                    </div>
+                  </div>
+                </div>
+
+                <div className='mt-3 flex gap-2'>
+                  <button
+                    type='button'
+                    className='nodrag flex-1 rounded-xl border-2 border-black bg-[#1A1A1A] py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-50'
+                    disabled={nodeData.rewriteBusy}
+                    onClick={nodeData.onAcceptRewrite}>
+                    Accept
+                  </button>
+                  <button
+                    type='button'
+                    className='nodrag flex-1 rounded-xl border-2 border-black bg-white py-2 text-sm font-bold uppercase tracking-wide text-foreground transition hover:bg-[#F7F4EC] disabled:opacity-50'
+                    disabled={nodeData.rewriteBusy}
+                    onClick={nodeData.onRejectRewrite}>
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className='rounded-2xl border-2 border-black bg-[#F7F4EC] px-3 py-3'>
+              <div className='mb-2 flex items-center justify-between gap-3'>
+                <p className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+                  Inline Rewrite Command
+                </p>
+                <p className='font-mono text-[10px] text-black/50'>
+                  {selectionPreview
+                    ? `${nodeData.selectionStart}-${nodeData.selectionEnd}`
+                    : 'Highlight text or ask by voice'}
+                </p>
+              </div>
+
+              <div className='flex flex-col gap-2 md:flex-row md:items-center'>
+                <div className='min-h-10 flex-1 rounded-xl border border-dashed border-black/25 bg-white px-3 py-2 font-mono text-xs leading-relaxed text-foreground/75'>
+                  {selectionPreview ||
+                    'Selected text appears here. Voice-created suggestions will show inline automatically.'}
+                </div>
+                <input
+                  value={nodeData.rewriteInstruction}
+                  onChange={(event) =>
+                    nodeData.onRewriteInstructionChange(event.target.value)
+                  }
+                  placeholder='Type a rewrite request or say it by voice'
+                  className='nodrag nowheel nopan h-10 flex-[1.3] rounded-xl border-2 border-black bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-black'
+                />
+                <button
+                  type='button'
+                  className='nodrag rounded-xl border-2 border-black bg-[#1A1A1A] px-4 py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-50'
+                  disabled={
+                    nodeData.rewriteBusy ||
+                    !selectionPreview ||
+                    !nodeData.rewriteInstruction.trim() ||
+                    !nodeData.activeProjectId.trim()
+                  }
+                  onClick={nodeData.onCreateRewrite}>
+                  {nodeData.rewriteBusy ? 'Thinking...' : 'Suggest'}
+                </button>
+              </div>
+            </div>
           </div>
         ) : (
           <div className='space-y-3'>
@@ -544,6 +892,40 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
           <p className='mt-2 font-mono text-xs text-[#FF6B6B]'>
             {nodeData.error}
           </p>
+        ) : null}
+        {nodeData.rewriteStatus ? (
+          <p className='mt-2 font-mono text-xs text-muted-foreground'>
+            {nodeData.rewriteStatus}
+          </p>
+        ) : null}
+        {nodeData.rewriteError ? (
+          <p className='mt-2 font-mono text-xs text-[#FF6B6B]'>
+            {nodeData.rewriteError}
+          </p>
+        ) : null}
+
+        {nodeData.revisions.length ? (
+          <div className='mt-4 space-y-2 rounded-xl border-2 border-black bg-[#F7F4EC] p-3'>
+            <p className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+              Recent Commits
+            </p>
+            {nodeData.revisions.slice(0, 3).map((revision) => (
+              <div
+                key={revision.id}
+                className='rounded-lg border border-black/20 bg-white px-3 py-2'>
+                <div className='flex items-center justify-between gap-3'>
+                  <p className='text-xs font-semibold text-foreground'>
+                    {revision.summary}
+                  </p>
+                  <p className='font-mono text-[10px] text-black/50'>
+                    {revision.acceptedAt
+                      ? new Date(revision.acceptedAt).toLocaleString()
+                      : 'Accepted'}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
         ) : null}
         {nodeData.mode === 'markdown' ? (
           <div className='mt-3 flex justify-end'>
@@ -1890,6 +2272,14 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [storyImportBusy, setStoryImportBusy] = useState(false);
   const [storyImportStatus, setStoryImportStatus] = useState('');
   const [storyImportError, setStoryImportError] = useState('');
+  const [storyRewriteInstruction, setStoryRewriteInstruction] = useState('');
+  const [storyRewriteSelection, setStoryRewriteSelection] = useState({
+    start: 0,
+    end: 0,
+  });
+  const [storyRewriteBusy, setStoryRewriteBusy] = useState(false);
+  const [storyRewriteStatus, setStoryRewriteStatus] = useState('');
+  const [storyRewriteError, setStoryRewriteError] = useState('');
   const [projectGraph, setProjectGraph] = useState<ProjectGraphRecord | null>(
     null,
   );
@@ -1934,6 +2324,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const nodePositionSaveTimersRef = useRef<Map<string, number>>(new Map());
   const storyAutosaveTimerRef = useRef<number | null>(null);
   const lastSavedStoryMarkdownRef = useRef('');
+  const lastSeenStoryRewriteToolCallIdRef = useRef('');
   const lastSavedNodePositionsRef = useRef<
     Record<string, { x: number; y: number }>
   >({});
@@ -2663,6 +3054,15 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
               ? (message.payload as Record<string, unknown>)
               : null;
 
+          const sourceTool =
+            payload && typeof payload.sourceTool === 'string'
+              ? payload.sourceTool.trim()
+              : '';
+          const phase =
+            payload && typeof payload.phase === 'string'
+              ? payload.phase.trim().toLowerCase()
+              : '';
+
           const statusMessage =
             payload && typeof payload.message === 'string'
               ? payload.message.trim()
@@ -2670,15 +3070,15 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
           if (statusMessage) {
             setSocketStatus(statusMessage);
-            setCaptionLines((value) =>
-              updateCaptionLines(value, 'Leo', statusMessage),
-            );
-          }
+            const shouldAppendCaption =
+              sourceTool !== 'propose_story_rewrite' || phase !== 'started';
 
-          const sourceTool =
-            payload && typeof payload.sourceTool === 'string'
-              ? payload.sourceTool.trim()
-              : '';
+            if (shouldAppendCaption) {
+              setCaptionLines((value) =>
+                updateCaptionLines(value, 'Leo', statusMessage),
+              );
+            }
+          }
           const statusProjectId =
             payload && typeof payload.projectId === 'string'
               ? payload.projectId.trim()
@@ -2688,10 +3088,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             sourceTool === 'generate_character_design' &&
             (!statusProjectId || statusProjectId === activeProjectIdRef.current)
           ) {
-            const phase =
-              payload && typeof payload.phase === 'string'
-                ? payload.phase.trim().toLowerCase()
-                : '';
             const ids =
               payload && Array.isArray(payload.characterNodeIds)
                 ? payload.characterNodeIds
@@ -3387,6 +3783,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       setStoryGoogleDocUrl('');
       setStoryImportStatus('');
       setStoryImportError('');
+      setStoryRewriteInstruction('');
+      setStoryRewriteSelection({ start: 0, end: 0 });
+      setStoryRewriteStatus('');
+      setStoryRewriteError('');
       return;
     }
 
@@ -3419,6 +3819,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         ).trim();
         setStoryImportStatus('');
         setStoryImportError('');
+        setStoryRewriteInstruction('');
+        setStoryRewriteStatus('');
+        setStoryRewriteError('');
+        setStoryRewriteSelection({ start: 0, end: 0 });
       })
       .catch((error) => {
         if (cancelled) {
@@ -3579,6 +3983,31 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     });
   }, [projectGraph]);
 
+  useEffect(() => {
+    const pendingRewrite = getPendingStoryRewrite(projectGraph?.story);
+    const toolCallId = pendingRewrite?.toolCallId?.trim() || '';
+
+    if (!toolCallId) {
+      lastSeenStoryRewriteToolCallIdRef.current = '';
+      return;
+    }
+
+    if (toolCallId === lastSeenStoryRewriteToolCallIdRef.current) {
+      return;
+    }
+
+    lastSeenStoryRewriteToolCallIdRef.current = toolCallId;
+    setStoryRewriteInstruction(pendingRewrite?.instruction ?? '');
+
+    const sourceLabel = formatRewriteSourceLabel(pendingRewrite?.source);
+    setStoryRewriteStatus(
+      sourceLabel === 'Leo via voice'
+        ? 'Leo suggested an inline rewrite. Review it directly in the story.'
+        : 'Pending rewrite suggestion is ready inline.',
+    );
+    setStoryRewriteError('');
+  }, [projectGraph?.story]);
+
   const importStoryForActiveProject = useCallback(
     async (mode: StoryImportMode) => {
       const projectId = activeProjectId.trim();
@@ -3657,6 +4086,214 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     },
     [activeProjectId, storyGoogleDocUrl, storyMarkdownInput],
   );
+
+  const createStoryRewriteProposal = useCallback(async () => {
+    const projectId = activeProjectId.trim();
+    if (!projectId) {
+      setStoryRewriteError(
+        'Select an active project before proposing a rewrite.',
+      );
+      return;
+    }
+
+    const selectionStart = Math.min(
+      storyRewriteSelection.start,
+      storyRewriteSelection.end,
+    );
+    const selectionEnd = Math.max(
+      storyRewriteSelection.start,
+      storyRewriteSelection.end,
+    );
+    const selectionText = storyMarkdownInput
+      .slice(selectionStart, selectionEnd)
+      .trim();
+    const instruction = storyRewriteInstruction.trim();
+
+    if (!selectionText) {
+      setStoryRewriteError(
+        'Highlight a section of the story before requesting a rewrite.',
+      );
+      return;
+    }
+
+    if (!instruction) {
+      setStoryRewriteError(
+        'Describe how you want the highlighted section to change.',
+      );
+      return;
+    }
+
+    setStoryRewriteBusy(true);
+    setStoryRewriteStatus('Preparing pending rewrite...');
+    setStoryRewriteError('');
+
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/story/rewrite/proposals`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            instruction,
+            selectionText,
+            selectionStart,
+            selectionEnd,
+          }),
+        },
+      );
+
+      const payload = (await response.json()) as StoryImportResponse;
+      if (!response.ok) {
+        throw new Error(
+          payload.error || 'Failed to create story rewrite proposal.',
+        );
+      }
+
+      if (payload.story) {
+        setProjectGraph((current) =>
+          current
+            ? {
+                ...current,
+                story: payload.story,
+              }
+            : current,
+        );
+      }
+
+      setStoryRewriteStatus('Pending rewrite ready for review.');
+    } catch (error) {
+      setStoryRewriteError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to create story rewrite proposal.',
+      );
+      setStoryRewriteStatus('');
+    } finally {
+      setStoryRewriteBusy(false);
+    }
+  }, [
+    activeProjectId,
+    storyMarkdownInput,
+    storyRewriteInstruction,
+    storyRewriteSelection.end,
+    storyRewriteSelection.start,
+  ]);
+
+  const acceptStoryRewriteProposal = useCallback(async () => {
+    const projectId = activeProjectId.trim();
+    if (!projectId) {
+      setStoryRewriteError(
+        'Select an active project before accepting a rewrite.',
+      );
+      return;
+    }
+
+    setStoryRewriteBusy(true);
+    setStoryRewriteStatus('Accepting pending rewrite...');
+    setStoryRewriteError('');
+
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/story/rewrite/accept`,
+        {
+          method: 'POST',
+          credentials: 'include',
+        },
+      );
+
+      const payload = (await response.json()) as StoryImportResponse;
+      if (!response.ok) {
+        throw new Error(
+          payload.error ||
+            (payload.stale
+              ? 'Pending rewrite is stale. Regenerate it against the current story.'
+              : 'Failed to accept story rewrite.'),
+        );
+      }
+
+      if (payload.story) {
+        setProjectGraph((current) =>
+          current
+            ? {
+                ...current,
+                story: payload.story,
+              }
+            : current,
+        );
+        setStoryMarkdownInput(payload.story.markdown ?? '');
+        lastSavedStoryMarkdownRef.current = (
+          payload.story.markdown ?? ''
+        ).trim();
+      }
+
+      setStoryRewriteInstruction('');
+      setStoryRewriteSelection({ start: 0, end: 0 });
+      setStoryRewriteStatus('Rewrite accepted and committed to the story.');
+    } catch (error) {
+      setStoryRewriteError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to accept story rewrite.',
+      );
+      setStoryRewriteStatus('');
+    } finally {
+      setStoryRewriteBusy(false);
+    }
+  }, [activeProjectId]);
+
+  const rejectStoryRewriteProposal = useCallback(async () => {
+    const projectId = activeProjectId.trim();
+    if (!projectId) {
+      setStoryRewriteError(
+        'Select an active project before rejecting a rewrite.',
+      );
+      return;
+    }
+
+    setStoryRewriteBusy(true);
+    setStoryRewriteStatus('Discarding pending rewrite...');
+    setStoryRewriteError('');
+
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/story/rewrite/reject`,
+        {
+          method: 'POST',
+          credentials: 'include',
+        },
+      );
+
+      const payload = (await response.json()) as StoryImportResponse;
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to reject story rewrite.');
+      }
+
+      if (payload.story) {
+        setProjectGraph((current) =>
+          current
+            ? {
+                ...current,
+                story: payload.story,
+              }
+            : current,
+        );
+      }
+
+      setStoryRewriteStatus('Pending rewrite discarded.');
+    } catch (error) {
+      setStoryRewriteError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to reject story rewrite.',
+      );
+      setStoryRewriteStatus('');
+    } finally {
+      setStoryRewriteBusy(false);
+    }
+  }, [activeProjectId]);
 
   useEffect(() => {
     const projectId = activeProjectId.trim();
@@ -4694,24 +5331,62 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     };
 
     if (projectGraph.story) {
+      const selectionStart = Math.min(
+        storyRewriteSelection.start,
+        storyRewriteSelection.end,
+      );
+      const selectionEnd = Math.max(
+        storyRewriteSelection.start,
+        storyRewriteSelection.end,
+      );
+      const selectionText =
+        selectionEnd > selectionStart
+          ? storyMarkdownInput.slice(selectionStart, selectionEnd).trim()
+          : '';
       const nodeData: StoryImportNodeData = {
         activeProjectId,
         hasIncomingConnection: hasStyleIncomingConnections,
         mode: storyImportMode,
         markdownInput: storyMarkdownInput,
         googleDocUrl: storyGoogleDocUrl,
+        rewriteInstruction: storyRewriteInstruction,
+        selectionText,
+        selectionStart,
+        selectionEnd,
+        pendingProposal: getPendingStoryRewrite(projectGraph.story),
+        revisions: projectGraph.story.revisions ?? [],
         busy: storyImportBusy,
+        rewriteBusy: storyRewriteBusy,
         status: storyImportStatus,
         error: storyImportError,
+        rewriteStatus: storyRewriteStatus,
+        rewriteError: storyRewriteError,
         onModeChange: (mode) => {
           setStoryImportMode(mode);
           setStoryImportStatus('');
           setStoryImportError('');
         },
         onMarkdownChange: setStoryMarkdownInput,
+        onSelectionChange: (start, end) => {
+          setStoryRewriteSelection({ start, end });
+          setStoryRewriteError('');
+        },
         onGoogleDocUrlChange: setStoryGoogleDocUrl,
+        onRewriteInstructionChange: (value) => {
+          setStoryRewriteInstruction(value);
+          setStoryRewriteError('');
+        },
         onFetchGoogleDocs: () => {
           void importStoryForActiveProject('google_docs');
+        },
+        onCreateRewrite: () => {
+          void createStoryRewriteProposal();
+        },
+        onAcceptRewrite: () => {
+          void acceptStoryRewriteProposal();
+        },
+        onRejectRewrite: () => {
+          void rejectStoryRewriteProposal();
         },
       };
 
@@ -4979,8 +5654,11 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     activeProjectId,
     buildAutoStyleEdges,
     setEdges,
+    acceptStoryRewriteProposal,
+    createStoryRewriteProposal,
     importStoryForActiveProject,
     projectGraph,
+    rejectStoryRewriteProposal,
     setNodes,
     storyGoogleDocUrl,
     storyImportBusy,
@@ -4988,6 +5666,12 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     storyImportMode,
     storyImportStatus,
     storyMarkdownInput,
+    storyRewriteBusy,
+    storyRewriteError,
+    storyRewriteInstruction,
+    storyRewriteSelection.end,
+    storyRewriteSelection.start,
+    storyRewriteStatus,
     characterDrafts,
     characterDesignUiState,
     styleDrafts,

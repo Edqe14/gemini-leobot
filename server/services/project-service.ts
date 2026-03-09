@@ -1,11 +1,22 @@
 import { prisma } from '../lib/db';
 
+const storyInclude = {
+  include: {
+    revisions: {
+      orderBy: {
+        acceptedAt: 'desc' as const,
+      },
+      take: 12,
+    },
+  },
+};
+
 export async function listProjectsForUser(userId: string) {
   return prisma.project.findMany({
     where: { userId },
     orderBy: { updatedAt: 'desc' },
     include: {
-      story: true,
+      story: storyInclude,
       characterNodes: true,
       styleNodes: true,
       storyboardNodes: true,
@@ -29,7 +40,7 @@ export async function getProjectForUser(userId: string, projectId: string) {
       userId,
     },
     include: {
-      story: true,
+      story: storyInclude,
       characterNodes: true,
       styleNodes: true,
       storyboardNodes: true,

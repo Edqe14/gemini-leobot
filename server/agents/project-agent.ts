@@ -11,6 +11,7 @@ import {
   generateStoryboardTool,
   updateStoryboardTool,
   listProjectsTool,
+  proposeStoryRewriteTool,
   syncStoryNodeTool,
   updateCharacterBriefTool,
   upsertProjectStyleNodeTool,
@@ -77,6 +78,46 @@ export const ProjectAgent: AgentDefinition = {
         },
       },
       handler: syncStoryNodeTool,
+    },
+    {
+      name: 'propose_story_rewrite',
+      description:
+        'Create a pending rewrite proposal for a highlighted span of the active story without changing the live story until the user accepts it.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          instruction: {
+            type: Type.STRING,
+            description:
+              'Required rewrite request, such as improving dialogue, changing background description, or tightening a section.',
+          },
+          selectionText: {
+            type: Type.STRING,
+            description: 'Required exact highlighted story text to rewrite.',
+          },
+          selectionStart: {
+            type: Type.NUMBER,
+            description:
+              'Optional character offset where the highlighted selection starts in the current story markdown.',
+          },
+          selectionEnd: {
+            type: Type.NUMBER,
+            description:
+              'Optional character offset where the highlighted selection ends in the current story markdown.',
+          },
+          source: {
+            type: Type.STRING,
+            description:
+              'Optional source label for audit/history purposes, such as "assistant" or "story_node".',
+          },
+          toolCallId: {
+            type: Type.STRING,
+            description: 'Optional stable ID for this proposal request.',
+          },
+        },
+        required: ['instruction', 'selectionText'],
+      },
+      handler: proposeStoryRewriteTool,
     },
     {
       name: 'generate_character_brief',

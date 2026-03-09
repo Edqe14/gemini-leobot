@@ -86,6 +86,17 @@ model Story {
   title            String
   sourceDocUrl     String?
   markdown         String
+  pendingRewriteInstruction String?
+  pendingRewriteSelectionText String?
+  pendingRewriteSelectionStart Int?
+  pendingRewriteSelectionEnd Int?
+  pendingRewriteReplacementText String?
+  pendingRewriteMarkdown String?
+  pendingRewriteSummary String?
+  pendingRewriteSource String?
+  pendingRewriteToolCallId String?
+  pendingRewriteCreatedAt DateTime?
+  pendingRewriteUpdatedAt DateTime?
   positionX        Float?
   positionY        Float?
   importedAt       DateTime @default(now())
@@ -94,6 +105,28 @@ model Story {
   updatedAt        DateTime @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  revisions StoryRevision[]
+}
+
+model StoryRevision {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  storyId        String   @db.ObjectId
+  projectId      String   @db.ObjectId
+  instruction    String
+  selectionText  String
+  selectionStart Int
+  selectionEnd   Int
+  summary        String
+  previousMarkdown String
+  nextMarkdown   String
+  source         String?
+  acceptedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@index([storyId, acceptedAt(sort: Desc)])
+  @@index([projectId, acceptedAt(sort: Desc)])
 }
 
 model CharacterNode {

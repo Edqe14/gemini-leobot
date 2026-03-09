@@ -242,6 +242,20 @@ const characterAutoOptionsSchema = z.object({
   maxCharacters: z.coerce.number().int().min(1).max(12).optional(),
 });
 
+const storyRewriteProposalSchema = z.object({
+  instruction: z.string().trim().min(1).max(4000),
+  selectionText: z.string().trim().min(1).max(16000),
+  selectionStart: z.coerce.number().int().min(0).optional(),
+  selectionEnd: z.coerce.number().int().min(1).optional(),
+  source: z.string().trim().max(120).optional(),
+  toolCallId: z.string().trim().max(200).optional(),
+});
+
+const generatedStoryRewriteSchema = z.object({
+  replacementText: z.string().trim().min(1).max(20000),
+  summary: z.string().trim().min(1).max(400),
+});
+
 const generatedCharacterTraitsSchema = z
   .object({
     behavior: normalizedOptionalTextSchema,
@@ -681,6 +695,477 @@ function formatValidationIssues(issues: z.ZodIssue[]) {
     const path = issue.path.length ? issue.path.join('.') : 'input';
     return `${path}: ${issue.message}`;
   });
+}
+
+const storyWithRevisionsInclude = {
+  revisions: {
+    orderBy: {
+      acceptedAt: 'desc' as const,
+    },
+    take: 12,
+  },
+};
+
+type StoryRewriteSelection = {
+  selectionText: string;
+  selectionStart: number;
+  selectionEnd: number;
+};
+
+async function verifyProjectAccessForUser(userId: string, projectId: string) {
+  const project = await prisma.project.findFirst({
+    where: {
+      id: projectId,
+      userId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return Boolean(project);
+}
+
+async function getStoryForProject(projectId: string) {
+  return prisma.story.findUnique({
+    where: { projectId },
+    include: storyWithRevisionsInclude,
+  });
+}
+
+function clearPendingRewriteFields() {
+  return {
+    pendingRewriteInstruction: null,
+    pendingRewriteSelectionText: null,
+    pendingRewriteSelectionStart: null,
+    pendingRewriteSelectionEnd: null,
+    pendingRewriteReplacementText: null,
+    pendingRewriteMarkdown: null,
+    pendingRewriteSummary: null,
+    pendingRewriteSource: null,
+    pendingRewriteToolCallId: null,
+    pendingRewriteCreatedAt: null,
+    pendingRewriteUpdatedAt: null,
+  };
+}
+
+function resolveStoryRewriteSelection(input: {
+  markdown: string;
+  selectionText: string;
+  selectionStart?: number;
+  selectionEnd?: number;
+}) {
+  const markdown = input.markdown;
+  const selectionText = input.selectionText.trim();
+  const hasExplicitRange =
+    typeof input.selectionStart === 'number' &&
+    Number.isInteger(input.selectionStart) &&
+    typeof input.selectionEnd === 'number' &&
+    Number.isInteger(input.selectionEnd);
+
+  if (hasExplicitRange) {
+    const selectionStart = input.selectionStart as number;
+    const selectionEnd = input.selectionEnd as number;
+
+    if (selectionEnd <= selectionStart || selectionEnd > markdown.length) {
+      throw new Error('Highlighted story range is invalid.');
+    }
+
+    const currentText = markdown.slice(selectionStart, selectionEnd);
+    if (currentText !== selectionText) {
+      throw new Error(
+        'Highlighted text no longer matches the current story. Refresh the story and select the target text again.',
+      );
+    }
+
+    return {
+      selectionText,
+      selectionStart,
+      selectionEnd,
+    } satisfies StoryRewriteSelection;
+  }
+
+  const firstIndex = markdown.indexOf(selectionText);
+  if (firstIndex < 0) {
+    throw new Error(
+      'Selected text was not found in the current story. Highlight the target section again.',
+    );
+  }
+
+  const duplicateIndex = markdown.indexOf(selectionText, firstIndex + 1);
+  if (duplicateIndex >= 0) {
+    throw new Error(
+      'Selected text appears multiple times in the story. Provide an exact highlight range.',
+    );
+  }
+
+  return {
+    selectionText,
+    selectionStart: firstIndex,
+    selectionEnd: firstIndex + selectionText.length,
+  } satisfies StoryRewriteSelection;
+}
+
+function applyReplacementToStoryMarkdown(input: {
+  markdown: string;
+  selectionStart: number;
+  selectionEnd: number;
+  replacementText: string;
+}) {
+  return `${input.markdown.slice(0, input.selectionStart)}${input.replacementText}${input.markdown.slice(input.selectionEnd)}`;
+}
+
+function buildStoryRewriteSummary(input: {
+  instruction: string;
+  selectionText: string;
+  replacementText: string;
+  generatedSummary?: string;
+}) {
+  const generatedSummary = normalizeStringValue(input.generatedSummary);
+  if (generatedSummary) {
+    return generatedSummary;
+  }
+
+  const selectionPreview = input.selectionText
+    .replace(/\s+/g, ' ')
+    .slice(0, 72);
+  const replacementPreview = input.replacementText
+    .replace(/\s+/g, ' ')
+    .slice(0, 72);
+  const instructionPreview = input.instruction
+    .replace(/\s+/g, ' ')
+    .slice(0, 120);
+
+  return `Rewrite requested: ${instructionPreview}. Replaced "${selectionPreview}" with "${replacementPreview}".`;
+}
+
+async function generateStoryRewrite(input: {
+  markdown: string;
+  selection: StoryRewriteSelection;
+  instruction: string;
+}) {
+  const contextWindow = 500;
+  const before = input.markdown
+    .slice(
+      Math.max(0, input.selection.selectionStart - contextWindow),
+      input.selection.selectionStart,
+    )
+    .trim();
+  const after = input.markdown
+    .slice(
+      input.selection.selectionEnd,
+      Math.min(
+        input.markdown.length,
+        input.selection.selectionEnd + contextWindow,
+      ),
+    )
+    .trim();
+
+  const response = await characterDerivationAi.models.generateContent({
+    model: env.GEMINI_CHARACTER_SUBAGENT_MODEL,
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: [
+              'You are rewriting one targeted section of a markdown story.',
+              'Only rewrite the selected text. Preserve meaning, continuity, markdown structure, tense, and surrounding story context unless the request explicitly changes them.',
+              'Return strict JSON with keys replacementText and summary.',
+              'replacementText must contain only the replacement for the selected span, not the whole story.',
+              'summary must be a short human-readable description of what changed.',
+              '',
+              `Instruction: ${input.instruction}`,
+              '',
+              'Selected text:',
+              input.selection.selectionText,
+              '',
+              'Context before selection:',
+              before || '(start of story)',
+              '',
+              'Context after selection:',
+              after || '(end of story)',
+            ].join('\n'),
+          },
+        ],
+      },
+    ],
+  });
+
+  const text = extractJsonText(getGenerateContentText(response));
+  const parsed = JSON.parse(text) as unknown;
+  return generatedStoryRewriteSchema.parse(parsed);
+}
+
+export async function createStoryRewriteProposalForUser(input: {
+  userId: string;
+  projectId: string;
+  instruction: string;
+  selectionText: string;
+  selectionStart?: number;
+  selectionEnd?: number;
+  source?: string;
+  toolCallId?: string;
+}) {
+  const hasAccess = await verifyProjectAccessForUser(
+    input.userId,
+    input.projectId,
+  );
+  if (!hasAccess) {
+    return {
+      ok: false as const,
+      message: 'Project not found',
+    };
+  }
+
+  const parsed = storyRewriteProposalSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      message: 'Invalid story rewrite request.',
+      issues: formatValidationIssues(parsed.error.issues),
+    };
+  }
+
+  const story = await getStoryForProject(input.projectId);
+  if (!story) {
+    return {
+      ok: false as const,
+      message: 'Story not found for this project.',
+    };
+  }
+
+  const markdown = normalizeStringValue(story.markdown);
+  if (!markdown) {
+    return {
+      ok: false as const,
+      message:
+        'Story is empty. Import or write the story before proposing rewrites.',
+    };
+  }
+
+  let selection: StoryRewriteSelection;
+  try {
+    selection = resolveStoryRewriteSelection({
+      markdown,
+      selectionText: parsed.data.selectionText,
+      selectionStart: parsed.data.selectionStart,
+      selectionEnd: parsed.data.selectionEnd,
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      message:
+        error instanceof Error ? error.message : 'Invalid story selection.',
+    };
+  }
+
+  const generated = await generateStoryRewrite({
+    markdown,
+    selection,
+    instruction: parsed.data.instruction,
+  });
+  const replacementText = generated.replacementText.trim();
+  const nextMarkdown = applyReplacementToStoryMarkdown({
+    markdown,
+    selectionStart: selection.selectionStart,
+    selectionEnd: selection.selectionEnd,
+    replacementText,
+  });
+  const summary = buildStoryRewriteSummary({
+    instruction: parsed.data.instruction,
+    selectionText: selection.selectionText,
+    replacementText,
+    generatedSummary: generated.summary,
+  });
+  const now = new Date();
+
+  const updatedStory = await prisma.story.update({
+    where: { id: story.id },
+    data: {
+      pendingRewriteInstruction: parsed.data.instruction,
+      pendingRewriteSelectionText: selection.selectionText,
+      pendingRewriteSelectionStart: selection.selectionStart,
+      pendingRewriteSelectionEnd: selection.selectionEnd,
+      pendingRewriteReplacementText: replacementText,
+      pendingRewriteMarkdown: nextMarkdown,
+      pendingRewriteSummary: summary,
+      pendingRewriteSource: parsed.data.source || 'user_request',
+      pendingRewriteToolCallId: parsed.data.toolCallId || randomUUID(),
+      pendingRewriteCreatedAt: story.pendingRewriteCreatedAt ?? now,
+      pendingRewriteUpdatedAt: now,
+    },
+    include: storyWithRevisionsInclude,
+  });
+
+  return {
+    ok: true as const,
+    story: updatedStory,
+    proposal: {
+      instruction: updatedStory.pendingRewriteInstruction,
+      selectionText: updatedStory.pendingRewriteSelectionText,
+      selectionStart: updatedStory.pendingRewriteSelectionStart,
+      selectionEnd: updatedStory.pendingRewriteSelectionEnd,
+      replacementText: updatedStory.pendingRewriteReplacementText,
+      markdown: updatedStory.pendingRewriteMarkdown,
+      summary: updatedStory.pendingRewriteSummary,
+      source: updatedStory.pendingRewriteSource,
+      toolCallId: updatedStory.pendingRewriteToolCallId,
+      createdAt: updatedStory.pendingRewriteCreatedAt,
+      updatedAt: updatedStory.pendingRewriteUpdatedAt,
+    },
+  };
+}
+
+export async function acceptStoryRewriteProposalForUser(input: {
+  userId: string;
+  projectId: string;
+}) {
+  const hasAccess = await verifyProjectAccessForUser(
+    input.userId,
+    input.projectId,
+  );
+  if (!hasAccess) {
+    return {
+      ok: false as const,
+      message: 'Project not found',
+    };
+  }
+
+  const story = await getStoryForProject(input.projectId);
+  if (!story) {
+    return {
+      ok: false as const,
+      message: 'Story not found for this project.',
+    };
+  }
+
+  const selectionText = normalizeStringValue(story.pendingRewriteSelectionText);
+  const replacementText = normalizeStringValue(
+    story.pendingRewriteReplacementText,
+  );
+  const instruction = normalizeStringValue(story.pendingRewriteInstruction);
+  const summary = normalizeStringValue(story.pendingRewriteSummary);
+  const source = normalizeOptionalTrimmedString(story.pendingRewriteSource);
+  const selectionStart = story.pendingRewriteSelectionStart;
+  const selectionEnd = story.pendingRewriteSelectionEnd;
+
+  if (
+    !selectionText ||
+    !replacementText ||
+    !instruction ||
+    typeof selectionStart !== 'number' ||
+    typeof selectionEnd !== 'number'
+  ) {
+    return {
+      ok: false as const,
+      message: 'There is no pending story rewrite proposal to accept.',
+    };
+  }
+
+  let selection: StoryRewriteSelection;
+  try {
+    selection = resolveStoryRewriteSelection({
+      markdown: story.markdown,
+      selectionText,
+      selectionStart,
+      selectionEnd,
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Pending story rewrite is stale and cannot be accepted.',
+      stale: true,
+    };
+  }
+
+  const nextMarkdown = applyReplacementToStoryMarkdown({
+    markdown: story.markdown,
+    selectionStart: selection.selectionStart,
+    selectionEnd: selection.selectionEnd,
+    replacementText,
+  });
+
+  const updatedStory = await prisma.$transaction(async (tx) => {
+    await tx.storyRevision.create({
+      data: {
+        storyId: story.id,
+        projectId: input.projectId,
+        instruction,
+        selectionText,
+        selectionStart: selection.selectionStart,
+        selectionEnd: selection.selectionEnd,
+        summary,
+        previousMarkdown: story.markdown,
+        nextMarkdown,
+        source: source || null,
+      },
+    });
+
+    return tx.story.update({
+      where: { id: story.id },
+      data: {
+        markdown: nextMarkdown,
+        ...clearPendingRewriteFields(),
+      },
+      include: storyWithRevisionsInclude,
+    });
+  });
+
+  return {
+    ok: true as const,
+    story: updatedStory,
+    revisionCount: updatedStory.revisions.length,
+  };
+}
+
+export async function rejectStoryRewriteProposalForUser(input: {
+  userId: string;
+  projectId: string;
+}) {
+  const hasAccess = await verifyProjectAccessForUser(
+    input.userId,
+    input.projectId,
+  );
+  if (!hasAccess) {
+    return {
+      ok: false as const,
+      message: 'Project not found',
+    };
+  }
+
+  const story = await getStoryForProject(input.projectId);
+  if (!story) {
+    return {
+      ok: false as const,
+      message: 'Story not found for this project.',
+    };
+  }
+
+  const hasPendingProposal = Boolean(
+    normalizeStringValue(story.pendingRewriteSelectionText) &&
+    normalizeStringValue(story.pendingRewriteReplacementText),
+  );
+  if (!hasPendingProposal) {
+    return {
+      ok: false as const,
+      message: 'There is no pending story rewrite proposal to reject.',
+    };
+  }
+
+  const updatedStory = await prisma.story.update({
+    where: { id: story.id },
+    data: clearPendingRewriteFields(),
+    include: storyWithRevisionsInclude,
+  });
+
+  return {
+    ok: true as const,
+    story: updatedStory,
+  };
 }
 
 function parseCharacterProfileRecord(raw: string | null | undefined) {
@@ -2971,6 +3456,77 @@ export async function syncStoryNodeTool(context: ToolContext) {
     ...result,
     message:
       'Related nodes were resolved and story node sync completed. Use sync.resolvedStoryNodeId for reliable follow-up operations.',
+  };
+}
+
+export async function proposeStoryRewriteTool(context: ToolContext) {
+  const projectAccess = await verifyProjectAccess(context);
+  if (!projectAccess.ok) {
+    return projectAccess;
+  }
+
+  const projectId = context.projectId;
+  if (!projectId) {
+    return {
+      ok: false,
+      message: 'Active project was not found for this user.',
+    };
+  }
+
+  emitRuntimeEvent(context, {
+    type: 'agent.status',
+    payload: {
+      phase: 'started',
+      sourceTool: 'propose_story_rewrite',
+      projectId,
+      message: "I'm drafting an inline rewrite for that part of the story.",
+    },
+  });
+
+  const result = await createStoryRewriteProposalForUser({
+    userId: context.userId,
+    projectId,
+    instruction: stringifyUnknownValue(context.args.instruction),
+    selectionText: stringifyUnknownValue(context.args.selectionText),
+    selectionStart:
+      typeof context.args.selectionStart === 'number' ||
+      typeof context.args.selectionStart === 'string'
+        ? Number(context.args.selectionStart)
+        : undefined,
+    selectionEnd:
+      typeof context.args.selectionEnd === 'number' ||
+      typeof context.args.selectionEnd === 'string'
+        ? Number(context.args.selectionEnd)
+        : undefined,
+    source: normalizeOptionalTrimmedString(context.args.source) || 'assistant',
+    toolCallId:
+      normalizeOptionalTrimmedString(context.args.toolCallId) || randomUUID(),
+  });
+
+  const naturalSuccessMessage =
+    result.ok && result.proposal?.summary
+      ? `I drafted an inline rewrite: ${result.proposal.summary} Review it directly in the story and accept it if it works.`
+      : 'I drafted an inline rewrite for the selected story text. Review it directly in the story.';
+
+  emitRuntimeEvent(context, {
+    type: 'agent.status',
+    payload: {
+      phase: result.ok ? 'completed' : 'failed',
+      sourceTool: 'propose_story_rewrite',
+      projectId,
+      message: result.ok ? naturalSuccessMessage : result.message,
+    },
+  });
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ok: true,
+    message: naturalSuccessMessage,
+    story: result.story,
+    proposal: result.proposal,
   };
 }
 
