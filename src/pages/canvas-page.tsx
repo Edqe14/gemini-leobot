@@ -630,6 +630,11 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
   const sourceLabel = formatRewriteSourceLabel(
     nodeData.pendingProposal?.source,
   );
+  const wordCount = nodeData.markdownInput
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+  const charCount = selectionPreview.length;
 
   return (
     <div className='relative w-200 overflow-visible rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
@@ -663,30 +668,37 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
       ) : null}
 
       {/* header */}
-      <div className='flex items-center gap-2 border-b-2 border-black bg-[#FFE234] px-4 py-2.5'>
+      <div className='flex items-center justify-between border-b-2 border-black bg-[#FFE234] px-4 py-2.5'>
         <span className='text-xs font-black uppercase tracking-widest'>
           Story
         </span>
+        {nodeData.mode === 'markdown' && wordCount > 0 ? (
+          <span className='font-mono text-[10px] text-black/50'>
+            {wordCount.toLocaleString()} words
+          </span>
+        ) : null}
       </div>
 
       <div className='p-4'>
-        <div className='mb-3 flex items-center gap-2'>
+        {/* Segmented mode tabs */}
+        <div className='mb-3 flex overflow-hidden rounded-xl border-2 border-black'>
           <button
             type='button'
-            className={`nodrag h-8 min-w-28 rounded-lg border-2 border-black px-3 text-xs font-bold uppercase tracking-wide transition ${
+            className={`nodrag flex-1 py-1.5 text-xs font-bold uppercase tracking-wide transition ${
               nodeData.mode === 'markdown'
-                ? 'bg-[#1A1A1A] text-[#FFE234] shadow-[2px_2px_0_#4A4A4A]'
-                : 'bg-white hover:bg-[#EDEAD9]'
+                ? 'bg-[#1A1A1A] text-[#FFE234]'
+                : 'bg-white text-foreground hover:bg-[#F7F4EC]'
             }`}
             onClick={() => nodeData.onModeChange('markdown')}>
             Markdown
           </button>
+          <div className='w-0.5 bg-black' />
           <button
             type='button'
-            className={`nodrag h-8 min-w-28 rounded-lg border-2 border-black px-3 text-xs font-bold uppercase tracking-wide transition ${
+            className={`nodrag flex-1 py-1.5 text-xs font-bold uppercase tracking-wide transition ${
               nodeData.mode === 'google_docs'
-                ? 'bg-[#1A1A1A] text-[#FFE234] shadow-[2px_2px_0_#4A4A4A]'
-                : 'bg-white hover:bg-[#EDEAD9]'
+                ? 'bg-[#1A1A1A] text-[#FFE234]'
+                : 'bg-white text-foreground hover:bg-[#F7F4EC]'
             }`}
             onClick={() => nodeData.onModeChange('google_docs')}>
             Google Docs
@@ -695,7 +707,8 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
 
         {nodeData.mode === 'markdown' ? (
           <div className='space-y-3'>
-            <div className='relative overflow-visible'>
+            {/* Editor */}
+            <div className='relative'>
               <div
                 ref={editorRef}
                 contentEditable
@@ -753,11 +766,11 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
                     .insertNode(document.createTextNode(text));
                   selection.collapseToEnd();
                 }}
-                className='nodrag nowheel nopan h-64 w-full overflow-y-auto rounded-xl border-2 border-black bg-[#F7F4EC] px-3 py-2 font-mono text-sm leading-6 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-black'>
+                className='nodrag nowheel nopan h-120 w-full cursor-text overflow-y-auto rounded-xl border-2 border-black bg-[#FDFBF5] px-4 py-3 font-mono text-sm leading-7 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-[#FFE234]'>
                 {nodeData.pendingProposal ? (
                   <>
                     <span>{pendingSelection.before}</span>
-                    <span className='rounded-[0.35rem] bg-[#CCFF00]/45 shadow-[inset_0_-2px_0_#99B200]'>
+                    <span className='rounded-[0.25rem] bg-amber-200/70 shadow-[inset_0_-2px_0_#D97706]'>
                       {pendingSelection.highlight || ' '}
                     </span>
                     <span>{pendingSelection.after}</span>
@@ -766,54 +779,67 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
                   nodeData.markdownInput
                 )}
               </div>
+              {/* Scroll fade */}
+              <div className='pointer-events-none absolute bottom-0 left-0 right-0 h-7 rounded-b-xl bg-gradient-to-t from-[#FDFBF5] to-transparent' />
             </div>
 
+            {/* Pending proposal — git diff card */}
             {nodeData.pendingProposal ? (
-              <div className='w-136 max-w-[calc(100vw-6rem)] rounded-2xl border-2 border-black bg-[#FCFFF0] p-4 shadow-[4px_4px_0_#1A1A1A]'>
-                <div className='flex items-center justify-between gap-3'>
-                  <div>
-                    <p className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
-                      Inline Rewrite
-                    </p>
-                    <p className='text-sm font-bold text-foreground'>
-                      {nodeData.pendingProposal.summary || 'Pending suggestion'}
-                    </p>
+              <div className='overflow-hidden rounded-2xl border-2 border-black shadow-[4px_4px_0_#1A1A1A]'>
+                {/* Card header */}
+                <div className='flex items-center justify-between border-b-2 border-black bg-[#FFE234] px-4 py-2'>
+                  <div className='flex items-center gap-2'>
+                    <span className='inline-block h-2 w-2 animate-pulse rounded-full bg-black' />
+                    <span className='font-mono text-[10px] font-black uppercase tracking-widest'>
+                      Suggested Rewrite
+                    </span>
                   </div>
-                  <span className='rounded-full border border-black/20 bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-black/60'>
+                  <span className='rounded-full border border-black/20 bg-white/70 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-black/60'>
                     {sourceLabel}
                   </span>
                 </div>
 
-                <div className='mt-3 space-y-2'>
-                  <div className='rounded-lg border border-black/15 bg-white px-3 py-2'>
-                    <p className='mb-1 font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
-                      Replace
+                {/* Summary */}
+                {nodeData.pendingProposal.summary ? (
+                  <div className='border-b border-black/10 bg-[#FAFAF8] px-4 py-2.5'>
+                    <p className='text-sm font-semibold leading-snug text-foreground/80'>
+                      {nodeData.pendingProposal.summary}
                     </p>
-                    <div className='whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/80'>
+                  </div>
+                ) : null}
+
+                {/* Diff view */}
+                <div className='divide-y-2 divide-black/10 font-mono text-xs'>
+                  <div className='flex bg-[#FFF2F2]'>
+                    <div className='flex w-8 flex-shrink-0 select-none items-start justify-center pt-2.5 font-black text-[#CC2200]'>
+                      −
+                    </div>
+                    <div className='flex-1 whitespace-pre-wrap py-2.5 pr-4 leading-relaxed text-[#AA1500]/75 line-through'>
                       {nodeData.pendingProposal.selectionText}
                     </div>
                   </div>
-                  <div className='rounded-lg border border-black/15 bg-[#F4FFD0] px-3 py-2'>
-                    <p className='mb-1 font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
-                      With
-                    </p>
-                    <div className='whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/80'>
+                  <div className='flex bg-[#F0FFF4]'>
+                    <div className='flex w-8 flex-shrink-0 select-none items-start justify-center pt-2.5 font-black text-[#166534]'>
+                      +
+                    </div>
+                    <div className='flex-1 whitespace-pre-wrap py-2.5 pr-4 leading-relaxed text-[#166534]'>
                       {nodeData.pendingProposal.replacementText}
                     </div>
                   </div>
                 </div>
 
-                <div className='mt-3 flex gap-2'>
+                {/* Actions */}
+                <div className='flex gap-2 border-t-2 border-black bg-white p-3'>
                   <button
                     type='button'
                     className='nodrag flex-1 rounded-xl border-2 border-black bg-[#1A1A1A] py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-50'
                     disabled={nodeData.rewriteBusy}
                     onClick={nodeData.onAcceptRewrite}>
-                    Accept
+                    ✓ Accept &amp; Commit
                   </button>
                   <button
                     type='button'
-                    className='nodrag flex-1 rounded-xl border-2 border-black bg-white py-2 text-sm font-bold uppercase tracking-wide text-foreground transition hover:bg-[#F7F4EC] disabled:opacity-50'
+                    className='nodrag rounded-2xl border-2 border-black bg-white px-6 py-2 text-sm font-bold uppercase tracking-wide text-foreground transition hover:bg-[#F7F4EC] disabled:opacity-50'
                     disabled={nodeData.rewriteBusy}
                     onClick={nodeData.onRejectRewrite}>
                     Dismiss
@@ -822,34 +848,41 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
               </div>
             ) : null}
 
-            <div className='rounded-2xl border-2 border-black bg-[#F7F4EC] px-3 py-3'>
-              <div className='mb-2 flex items-center justify-between gap-3'>
-                <p className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
-                  Inline Rewrite Command
-                </p>
-                <p className='font-mono text-[10px] text-black/50'>
-                  {selectionPreview
-                    ? `${nodeData.selectionStart}-${nodeData.selectionEnd}`
-                    : 'Highlight text or ask by voice'}
-                </p>
-              </div>
-
-              <div className='flex flex-col gap-2 md:flex-row md:items-center'>
-                <div className='min-h-10 flex-1 rounded-xl border border-dashed border-black/25 bg-white px-3 py-2 font-mono text-xs leading-relaxed text-foreground/75'>
-                  {selectionPreview ||
-                    'Selected text appears here. Voice-created suggestions will show inline automatically.'}
+            {/* Rewrite command bar */}
+            <div className='overflow-hidden rounded-2xl border-2 border-black bg-[#F7F4EC]'>
+              <div className='flex items-center justify-between border-b border-black/15 px-4 py-2'>
+                <div className='flex items-center gap-2'>
+                  <span className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+                    Rewrite
+                  </span>
+                  {selectionPreview ? (
+                    <span className='rounded-full bg-[#FFE234] px-2 py-0.5 font-mono text-[10px] font-bold text-black'>
+                      {charCount} chars selected
+                    </span>
+                  ) : null}
                 </div>
+                {!selectionPreview ? (
+                  <span className='font-mono text-[10px] text-black/40'>
+                    Select text in the editor above
+                  </span>
+                ) : null}
+              </div>
+              <div className='flex items-center gap-2 p-3'>
                 <input
                   value={nodeData.rewriteInstruction}
                   onChange={(event) =>
                     nodeData.onRewriteInstructionChange(event.target.value)
                   }
-                  placeholder='Type a rewrite request or say it by voice'
-                  className='nodrag nowheel nopan h-10 flex-[1.3] rounded-xl border-2 border-black bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-black'
+                  placeholder={
+                    selectionPreview
+                      ? 'Describe the rewrite...'
+                      : 'Select text above first'
+                  }
+                  className='nodrag nowheel nopan h-10 flex-1 rounded-xl border-2 border-black bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE234]'
                 />
                 <button
                   type='button'
-                  className='nodrag rounded-xl border-2 border-black bg-[#1A1A1A] px-4 py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-50'
+                  className='nodrag rounded-xl border-2 border-black bg-[#1A1A1A] px-5 py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-40'
                   disabled={
                     nodeData.rewriteBusy ||
                     !selectionPreview ||
@@ -857,7 +890,7 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
                     !nodeData.activeProjectId.trim()
                   }
                   onClick={nodeData.onCreateRewrite}>
-                  {nodeData.rewriteBusy ? 'Thinking...' : 'Suggest'}
+                  {nodeData.rewriteBusy ? '…' : 'Suggest'}
                 </button>
               </div>
             </div>
@@ -904,29 +937,46 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
           </p>
         ) : null}
 
+        {/* Commit log — timeline */}
         {nodeData.revisions.length ? (
-          <div className='mt-4 space-y-2 rounded-xl border-2 border-black bg-[#F7F4EC] p-3'>
-            <p className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
-              Recent Commits
-            </p>
-            {nodeData.revisions.slice(0, 3).map((revision) => (
-              <div
-                key={revision.id}
-                className='rounded-lg border border-black/20 bg-white px-3 py-2'>
-                <div className='flex items-center justify-between gap-3'>
-                  <p className='text-xs font-semibold text-foreground'>
-                    {revision.summary}
-                  </p>
-                  <p className='font-mono text-[10px] text-black/50'>
-                    {revision.acceptedAt
-                      ? new Date(revision.acceptedAt).toLocaleString()
-                      : 'Accepted'}
-                  </p>
+          <div className='mt-4'>
+            <div className='mb-3 flex items-center gap-3'>
+              <span className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+                Commit Log
+              </span>
+              <div className='flex-1 border-t border-dashed border-black/20' />
+            </div>
+            <div className='relative space-y-0 pl-5'>
+              <div className='absolute bottom-0 left-1.5 top-1 w-px bg-black/10' />
+              {nodeData.revisions.slice(0, 3).map((revision) => (
+                <div key={revision.id} className='relative pb-3'>
+                  <div className='absolute -left-[15px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-black bg-[#FFE234]' />
+                  <div className='rounded-lg border border-black/15 bg-white px-3 py-2'>
+                    <div className='flex items-start justify-between gap-2'>
+                      <p className='text-xs font-semibold leading-snug text-foreground'>
+                        {revision.summary}
+                      </p>
+                      <p className='shrink-0 font-mono text-[10px] text-black/40'>
+                        {revision.acceptedAt
+                          ? new Date(revision.acceptedAt).toLocaleString(
+                              undefined,
+                              {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              },
+                            )
+                          : 'Accepted'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         ) : null}
+
         {nodeData.mode === 'markdown' ? (
           <div className='mt-3 flex justify-end'>
             <p className='font-mono text-xs text-muted-foreground'>
