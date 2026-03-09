@@ -637,7 +637,7 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
   const charCount = selectionPreview.length;
 
   return (
-    <div className='relative w-200 overflow-visible rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+    <div className='relative w-200 overflow-visible'>
       {nodeData.hasIncomingConnection ? (
         <>
           <Handle
@@ -667,329 +667,331 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
         </>
       ) : null}
 
-      {/* header */}
-      <div className='flex items-center justify-between border-b-2 border-black bg-[#FFE234] px-4 py-2.5'>
-        <span className='text-xs font-black uppercase tracking-widest'>
-          Story
-        </span>
-        {nodeData.mode === 'markdown' && wordCount > 0 ? (
-          <span className='font-mono text-[10px] text-black/50'>
-            {wordCount.toLocaleString()} words
+      <div className='overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+        {/* header */}
+        <div className='flex items-center justify-between border-b-2 border-black bg-[#FFE234] px-4 py-2.5'>
+          <span className='text-xs font-black uppercase tracking-widest'>
+            Story
           </span>
-        ) : null}
-      </div>
-
-      <div className='p-4'>
-        {/* Segmented mode tabs */}
-        <div className='mb-3 flex overflow-hidden rounded-xl border-2 border-black'>
-          <button
-            type='button'
-            className={`nodrag flex-1 py-1.5 text-xs font-bold uppercase tracking-wide transition ${
-              nodeData.mode === 'markdown'
-                ? 'bg-[#1A1A1A] text-[#FFE234]'
-                : 'bg-white text-foreground hover:bg-[#F7F4EC]'
-            }`}
-            onClick={() => nodeData.onModeChange('markdown')}>
-            Markdown
-          </button>
-          <div className='w-0.5 bg-black' />
-          <button
-            type='button'
-            className={`nodrag flex-1 py-1.5 text-xs font-bold uppercase tracking-wide transition ${
-              nodeData.mode === 'google_docs'
-                ? 'bg-[#1A1A1A] text-[#FFE234]'
-                : 'bg-white text-foreground hover:bg-[#F7F4EC]'
-            }`}
-            onClick={() => nodeData.onModeChange('google_docs')}>
-            Google Docs
-          </button>
+          {nodeData.mode === 'markdown' && wordCount > 0 ? (
+            <span className='font-mono text-[10px] text-black/50'>
+              {wordCount.toLocaleString()} words
+            </span>
+          ) : null}
         </div>
 
-        {nodeData.mode === 'markdown' ? (
-          <div className='space-y-3'>
-            {/* Editor */}
-            <div className='relative'>
-              <div
-                ref={editorRef}
-                contentEditable
-                suppressContentEditableWarning
-                role='textbox'
-                aria-multiline='true'
-                onInput={(event) => {
-                  nodeData.onMarkdownChange(
-                    readEditablePlainText(event.currentTarget),
-                  );
+        <div className='p-4'>
+          {/* Segmented mode tabs */}
+          <div className='mb-3 flex overflow-hidden rounded-xl border-2 border-black'>
+            <button
+              type='button'
+              className={`nodrag flex-1 py-1.5 text-xs font-bold uppercase tracking-wide transition ${
+                nodeData.mode === 'markdown'
+                  ? 'bg-[#1A1A1A] text-[#FFE234]'
+                  : 'bg-white text-foreground hover:bg-[#F7F4EC]'
+              }`}
+              onClick={() => nodeData.onModeChange('markdown')}>
+              Markdown
+            </button>
+            <div className='w-0.5 bg-black' />
+            <button
+              type='button'
+              className={`nodrag flex-1 py-1.5 text-xs font-bold uppercase tracking-wide transition ${
+                nodeData.mode === 'google_docs'
+                  ? 'bg-[#1A1A1A] text-[#FFE234]'
+                  : 'bg-white text-foreground hover:bg-[#F7F4EC]'
+              }`}
+              onClick={() => nodeData.onModeChange('google_docs')}>
+              Google Docs
+            </button>
+          </div>
 
-                  const nextSelection = getSelectionOffsetsWithin(
-                    event.currentTarget,
-                  );
-                  if (nextSelection) {
-                    nodeData.onSelectionChange(
-                      nextSelection.start,
-                      nextSelection.end,
+          {nodeData.mode === 'markdown' ? (
+            <div className='space-y-3'>
+              {/* Editor */}
+              <div className='relative'>
+                <div
+                  ref={editorRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  role='textbox'
+                  aria-multiline='true'
+                  onInput={(event) => {
+                    nodeData.onMarkdownChange(
+                      readEditablePlainText(event.currentTarget),
                     );
-                  }
-                }}
-                onKeyUp={(event) => {
-                  const nextSelection = getSelectionOffsetsWithin(
-                    event.currentTarget,
-                  );
-                  if (nextSelection) {
-                    nodeData.onSelectionChange(
-                      nextSelection.start,
-                      nextSelection.end,
-                    );
-                  }
-                }}
-                onMouseUp={(event) => {
-                  const nextSelection = getSelectionOffsetsWithin(
-                    event.currentTarget,
-                  );
-                  if (nextSelection) {
-                    nodeData.onSelectionChange(
-                      nextSelection.start,
-                      nextSelection.end,
-                    );
-                  }
-                }}
-                onPaste={(event) => {
-                  event.preventDefault();
-                  const text = event.clipboardData.getData('text/plain');
-                  const selection = window.getSelection();
-                  if (!selection || selection.rangeCount === 0) {
-                    return;
-                  }
 
-                  selection.deleteFromDocument();
-                  selection
-                    .getRangeAt(0)
-                    .insertNode(document.createTextNode(text));
-                  selection.collapseToEnd();
-                }}
-                className='nodrag nowheel nopan h-120 w-full cursor-text overflow-y-auto rounded-xl border-2 border-black bg-[#FDFBF5] px-4 py-3 font-mono text-sm leading-7 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-[#FFE234]'>
-                {nodeData.pendingProposal ? (
-                  <>
-                    <span>{pendingSelection.before}</span>
-                    <span className='rounded-[0.25rem] bg-amber-200/70 shadow-[inset_0_-2px_0_#D97706]'>
-                      {pendingSelection.highlight || ' '}
-                    </span>
-                    <span>{pendingSelection.after}</span>
-                  </>
-                ) : (
-                  nodeData.markdownInput
-                )}
+                    const nextSelection = getSelectionOffsetsWithin(
+                      event.currentTarget,
+                    );
+                    if (nextSelection) {
+                      nodeData.onSelectionChange(
+                        nextSelection.start,
+                        nextSelection.end,
+                      );
+                    }
+                  }}
+                  onKeyUp={(event) => {
+                    const nextSelection = getSelectionOffsetsWithin(
+                      event.currentTarget,
+                    );
+                    if (nextSelection) {
+                      nodeData.onSelectionChange(
+                        nextSelection.start,
+                        nextSelection.end,
+                      );
+                    }
+                  }}
+                  onMouseUp={(event) => {
+                    const nextSelection = getSelectionOffsetsWithin(
+                      event.currentTarget,
+                    );
+                    if (nextSelection) {
+                      nodeData.onSelectionChange(
+                        nextSelection.start,
+                        nextSelection.end,
+                      );
+                    }
+                  }}
+                  onPaste={(event) => {
+                    event.preventDefault();
+                    const text = event.clipboardData.getData('text/plain');
+                    const selection = window.getSelection();
+                    if (!selection || selection.rangeCount === 0) {
+                      return;
+                    }
+
+                    selection.deleteFromDocument();
+                    selection
+                      .getRangeAt(0)
+                      .insertNode(document.createTextNode(text));
+                    selection.collapseToEnd();
+                  }}
+                  className='nodrag nowheel nopan h-120 w-full cursor-text overflow-y-auto rounded-xl border-2 border-black bg-[#FDFBF5] px-4 py-3 font-mono text-sm leading-7 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-[#FFE234]'>
+                  {nodeData.pendingProposal ? (
+                    <>
+                      <span>{pendingSelection.before}</span>
+                      <span className='rounded-[0.25rem] bg-amber-200/70 shadow-[inset_0_-2px_0_#D97706]'>
+                        {pendingSelection.highlight || ' '}
+                      </span>
+                      <span>{pendingSelection.after}</span>
+                    </>
+                  ) : (
+                    nodeData.markdownInput
+                  )}
+                </div>
+                {/* Scroll fade */}
+                <div className='pointer-events-none absolute bottom-0 left-0 right-0 h-7 rounded-b-xl bg-gradient-to-t from-[#FDFBF5] to-transparent' />
               </div>
-              {/* Scroll fade */}
-              <div className='pointer-events-none absolute bottom-0 left-0 right-0 h-7 rounded-b-xl bg-gradient-to-t from-[#FDFBF5] to-transparent' />
-            </div>
 
-            {/* Pending proposal — git diff card */}
-            {nodeData.pendingProposal ? (
-              <div className='overflow-hidden rounded-2xl border-2 border-black shadow-[4px_4px_0_#1A1A1A]'>
-                {/* Card header */}
-                <div className='flex items-center justify-between border-b-2 border-black bg-[#FFE234] px-4 py-2'>
+              {/* Pending proposal — git diff card */}
+              {nodeData.pendingProposal ? (
+                <div className='overflow-hidden rounded-2xl border-2 border-black shadow-[4px_4px_0_#1A1A1A]'>
+                  {/* Card header */}
+                  <div className='flex items-center justify-between border-b-2 border-black bg-[#FFE234] px-4 py-2'>
+                    <div className='flex items-center gap-2'>
+                      <span className='inline-block h-2 w-2 animate-pulse rounded-full bg-black' />
+                      <span className='font-mono text-[10px] font-black uppercase tracking-widest'>
+                        Suggested Rewrite
+                      </span>
+                    </div>
+                    <span className='rounded-full border border-black/20 bg-white/70 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-black/60'>
+                      {sourceLabel}
+                    </span>
+                  </div>
+
+                  {/* Summary */}
+                  {nodeData.pendingProposal.summary ? (
+                    <div className='border-b border-black/10 bg-[#FAFAF8] px-4 py-2.5'>
+                      <p className='text-sm font-semibold leading-snug text-foreground/80'>
+                        {nodeData.pendingProposal.summary}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {/* Diff view */}
+                  <div className='divide-y-2 divide-black/10 font-mono text-xs'>
+                    <div className='flex bg-[#FFF2F2]'>
+                      <div className='flex w-8 flex-shrink-0 select-none items-start justify-center pt-2.5 font-black text-[#CC2200]'>
+                        −
+                      </div>
+                      <div className='flex-1 whitespace-pre-wrap py-2.5 pr-4 leading-relaxed text-[#AA1500]/75 line-through'>
+                        {nodeData.pendingProposal.selectionText}
+                      </div>
+                    </div>
+                    <div className='flex bg-[#F0FFF4]'>
+                      <div className='flex w-8 flex-shrink-0 select-none items-start justify-center pt-2.5 font-black text-[#166534]'>
+                        +
+                      </div>
+                      <div className='flex-1 whitespace-pre-wrap py-2.5 pr-4 leading-relaxed text-[#166534]'>
+                        {nodeData.pendingProposal.replacementText}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className='flex gap-2 border-t-2 border-black bg-white p-3'>
+                    <button
+                      type='button'
+                      className='nodrag flex-1 rounded-xl border-2 border-black bg-[#1A1A1A] py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-50'
+                      disabled={nodeData.rewriteBusy}
+                      onClick={nodeData.onAcceptRewrite}>
+                      ✓ Accept &amp; Commit
+                    </button>
+                    <button
+                      type='button'
+                      className='nodrag rounded-2xl border-2 border-black bg-white px-6 py-2 text-sm font-bold uppercase tracking-wide text-foreground transition hover:bg-[#F7F4EC] disabled:opacity-50'
+                      disabled={nodeData.rewriteBusy}
+                      onClick={nodeData.onRejectRewrite}>
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Rewrite command bar */}
+              <div className='overflow-hidden rounded-2xl border-2 border-black bg-[#F7F4EC]'>
+                <div className='flex items-center justify-between border-b border-black/15 px-4 py-2'>
                   <div className='flex items-center gap-2'>
-                    <span className='inline-block h-2 w-2 animate-pulse rounded-full bg-black' />
-                    <span className='font-mono text-[10px] font-black uppercase tracking-widest'>
-                      Suggested Rewrite
+                    <span className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+                      Rewrite
                     </span>
+                    {selectionPreview ? (
+                      <span className='rounded-full bg-[#FFE234] px-2 py-0.5 font-mono text-[10px] font-bold text-black'>
+                        {charCount} chars selected
+                      </span>
+                    ) : null}
                   </div>
-                  <span className='rounded-full border border-black/20 bg-white/70 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-black/60'>
-                    {sourceLabel}
-                  </span>
-                </div>
-
-                {/* Summary */}
-                {nodeData.pendingProposal.summary ? (
-                  <div className='border-b border-black/10 bg-[#FAFAF8] px-4 py-2.5'>
-                    <p className='text-sm font-semibold leading-snug text-foreground/80'>
-                      {nodeData.pendingProposal.summary}
-                    </p>
-                  </div>
-                ) : null}
-
-                {/* Diff view */}
-                <div className='divide-y-2 divide-black/10 font-mono text-xs'>
-                  <div className='flex bg-[#FFF2F2]'>
-                    <div className='flex w-8 flex-shrink-0 select-none items-start justify-center pt-2.5 font-black text-[#CC2200]'>
-                      −
-                    </div>
-                    <div className='flex-1 whitespace-pre-wrap py-2.5 pr-4 leading-relaxed text-[#AA1500]/75 line-through'>
-                      {nodeData.pendingProposal.selectionText}
-                    </div>
-                  </div>
-                  <div className='flex bg-[#F0FFF4]'>
-                    <div className='flex w-8 flex-shrink-0 select-none items-start justify-center pt-2.5 font-black text-[#166534]'>
-                      +
-                    </div>
-                    <div className='flex-1 whitespace-pre-wrap py-2.5 pr-4 leading-relaxed text-[#166534]'>
-                      {nodeData.pendingProposal.replacementText}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className='flex gap-2 border-t-2 border-black bg-white p-3'>
-                  <button
-                    type='button'
-                    className='nodrag flex-1 rounded-xl border-2 border-black bg-[#1A1A1A] py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-50'
-                    disabled={nodeData.rewriteBusy}
-                    onClick={nodeData.onAcceptRewrite}>
-                    ✓ Accept &amp; Commit
-                  </button>
-                  <button
-                    type='button'
-                    className='nodrag rounded-2xl border-2 border-black bg-white px-6 py-2 text-sm font-bold uppercase tracking-wide text-foreground transition hover:bg-[#F7F4EC] disabled:opacity-50'
-                    disabled={nodeData.rewriteBusy}
-                    onClick={nodeData.onRejectRewrite}>
-                    Dismiss
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {/* Rewrite command bar */}
-            <div className='overflow-hidden rounded-2xl border-2 border-black bg-[#F7F4EC]'>
-              <div className='flex items-center justify-between border-b border-black/15 px-4 py-2'>
-                <div className='flex items-center gap-2'>
-                  <span className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
-                    Rewrite
-                  </span>
-                  {selectionPreview ? (
-                    <span className='rounded-full bg-[#FFE234] px-2 py-0.5 font-mono text-[10px] font-bold text-black'>
-                      {charCount} chars selected
+                  {!selectionPreview ? (
+                    <span className='font-mono text-[10px] text-black/40'>
+                      Select text in the editor above
                     </span>
                   ) : null}
                 </div>
-                {!selectionPreview ? (
-                  <span className='font-mono text-[10px] text-black/40'>
-                    Select text in the editor above
-                  </span>
-                ) : null}
-              </div>
-              <div className='flex items-center gap-2 p-3'>
-                <input
-                  value={nodeData.rewriteInstruction}
-                  onChange={(event) =>
-                    nodeData.onRewriteInstructionChange(event.target.value)
-                  }
-                  placeholder={
-                    selectionPreview
-                      ? 'Describe the rewrite...'
-                      : 'Select text above first'
-                  }
-                  className='nodrag nowheel nopan h-10 flex-1 rounded-xl border-2 border-black bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE234]'
-                />
-                <button
-                  type='button'
-                  className='nodrag rounded-xl border-2 border-black bg-[#1A1A1A] px-5 py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-40'
-                  disabled={
-                    nodeData.rewriteBusy ||
-                    !selectionPreview ||
-                    !nodeData.rewriteInstruction.trim() ||
-                    !nodeData.activeProjectId.trim()
-                  }
-                  onClick={nodeData.onCreateRewrite}>
-                  {nodeData.rewriteBusy ? '…' : 'Suggest'}
-                </button>
+                <div className='flex items-center gap-2 p-3'>
+                  <input
+                    value={nodeData.rewriteInstruction}
+                    onChange={(event) =>
+                      nodeData.onRewriteInstructionChange(event.target.value)
+                    }
+                    placeholder={
+                      selectionPreview
+                        ? 'Describe the rewrite...'
+                        : 'Select text above first'
+                    }
+                    className='nodrag nowheel nopan h-10 flex-1 rounded-xl border-2 border-black bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE234]'
+                  />
+                  <button
+                    type='button'
+                    className='nodrag rounded-xl border-2 border-black bg-[#1A1A1A] px-5 py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-40'
+                    disabled={
+                      nodeData.rewriteBusy ||
+                      !selectionPreview ||
+                      !nodeData.rewriteInstruction.trim() ||
+                      !nodeData.activeProjectId.trim()
+                    }
+                    onClick={nodeData.onCreateRewrite}>
+                    {nodeData.rewriteBusy ? '…' : 'Suggest'}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ) : (
-          <div className='space-y-3'>
-            <input
-              type='url'
-              value={nodeData.googleDocUrl}
-              onChange={(event) =>
-                nodeData.onGoogleDocUrlChange(event.target.value)
-              }
-              placeholder='https://docs.google.com/document/d/...'
-              className='nodrag nowheel nopan h-10 w-full rounded-lg border-2 border-black bg-[#F7F4EC] px-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-black'
-            />
-            <button
-              type='button'
-              className='nodrag w-full rounded-xl border-2 border-black bg-[#1A1A1A] py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-50'
-              disabled={nodeData.busy || !nodeData.activeProjectId.trim()}
-              onClick={nodeData.onFetchGoogleDocs}>
-              {nodeData.busy ? 'Fetching...' : 'Fetch From Google Docs'}
-            </button>
-          </div>
-        )}
-
-        {nodeData.status && nodeData.mode !== 'markdown' ? (
-          <p className='mt-2 font-mono text-xs text-muted-foreground'>
-            {nodeData.status}
-          </p>
-        ) : null}
-        {nodeData.error ? (
-          <p className='mt-2 font-mono text-xs text-[#FF6B6B]'>
-            {nodeData.error}
-          </p>
-        ) : null}
-        {nodeData.rewriteStatus ? (
-          <p className='mt-2 font-mono text-xs text-muted-foreground'>
-            {nodeData.rewriteStatus}
-          </p>
-        ) : null}
-        {nodeData.rewriteError ? (
-          <p className='mt-2 font-mono text-xs text-[#FF6B6B]'>
-            {nodeData.rewriteError}
-          </p>
-        ) : null}
-
-        {/* Commit log — timeline */}
-        {nodeData.revisions.length ? (
-          <div className='mt-4'>
-            <div className='mb-3 flex items-center gap-3'>
-              <span className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
-                Commit Log
-              </span>
-              <div className='flex-1 border-t border-dashed border-black/20' />
+          ) : (
+            <div className='space-y-3'>
+              <input
+                type='url'
+                value={nodeData.googleDocUrl}
+                onChange={(event) =>
+                  nodeData.onGoogleDocUrlChange(event.target.value)
+                }
+                placeholder='https://docs.google.com/document/d/...'
+                className='nodrag nowheel nopan h-10 w-full rounded-lg border-2 border-black bg-[#F7F4EC] px-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-black'
+              />
+              <button
+                type='button'
+                className='nodrag w-full rounded-xl border-2 border-black bg-[#1A1A1A] py-2 text-sm font-bold uppercase tracking-wide text-[#FFE234] shadow-[3px_3px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#4A4A4A] disabled:opacity-50'
+                disabled={nodeData.busy || !nodeData.activeProjectId.trim()}
+                onClick={nodeData.onFetchGoogleDocs}>
+                {nodeData.busy ? 'Fetching...' : 'Fetch From Google Docs'}
+              </button>
             </div>
-            <div className='relative space-y-0 pl-5'>
-              <div className='absolute bottom-0 left-1.5 top-1 w-px bg-black/10' />
-              {nodeData.revisions.slice(0, 3).map((revision) => (
-                <div key={revision.id} className='relative pb-3'>
-                  <div className='absolute -left-[15px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-black bg-[#FFE234]' />
-                  <div className='rounded-lg border border-black/15 bg-white px-3 py-2'>
-                    <div className='flex items-start justify-between gap-2'>
-                      <p className='text-xs font-semibold leading-snug text-foreground'>
-                        {revision.summary}
-                      </p>
-                      <p className='shrink-0 font-mono text-[10px] text-black/40'>
-                        {revision.acceptedAt
-                          ? new Date(revision.acceptedAt).toLocaleString(
-                              undefined,
-                              {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              },
-                            )
-                          : 'Accepted'}
-                      </p>
+          )}
+
+          {nodeData.status && nodeData.mode !== 'markdown' ? (
+            <p className='mt-2 font-mono text-xs text-muted-foreground'>
+              {nodeData.status}
+            </p>
+          ) : null}
+          {nodeData.error ? (
+            <p className='mt-2 font-mono text-xs text-[#FF6B6B]'>
+              {nodeData.error}
+            </p>
+          ) : null}
+          {nodeData.rewriteStatus ? (
+            <p className='mt-2 font-mono text-xs text-muted-foreground'>
+              {nodeData.rewriteStatus}
+            </p>
+          ) : null}
+          {nodeData.rewriteError ? (
+            <p className='mt-2 font-mono text-xs text-[#FF6B6B]'>
+              {nodeData.rewriteError}
+            </p>
+          ) : null}
+
+          {/* Commit log — timeline */}
+          {nodeData.revisions.length ? (
+            <div className='mt-4'>
+              <div className='mb-3 flex items-center gap-3'>
+                <span className='font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+                  Commit Log
+                </span>
+                <div className='flex-1 border-t border-dashed border-black/20' />
+              </div>
+              <div className='relative space-y-0 pl-5'>
+                <div className='absolute bottom-0 left-1.5 top-1 w-px bg-black/10' />
+                {nodeData.revisions.slice(0, 3).map((revision) => (
+                  <div key={revision.id} className='relative pb-3'>
+                    <div className='absolute -left-[15px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-black bg-[#FFE234]' />
+                    <div className='rounded-lg border border-black/15 bg-white px-3 py-2'>
+                      <div className='flex items-start justify-between gap-2'>
+                        <p className='text-xs font-semibold leading-snug text-foreground'>
+                          {revision.summary}
+                        </p>
+                        <p className='shrink-0 font-mono text-[10px] text-black/40'>
+                          {revision.acceptedAt
+                            ? new Date(revision.acceptedAt).toLocaleString(
+                                undefined,
+                                {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                },
+                              )
+                            : 'Accepted'}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        {nodeData.mode === 'markdown' ? (
-          <div className='mt-3 flex justify-end'>
-            <p className='font-mono text-xs text-muted-foreground'>
-              {nodeData.busy
-                ? 'Saving...'
-                : nodeData.status === 'Autosaved'
-                  ? '✓ Saved'
-                  : nodeData.status === 'Autosave failed'
-                    ? '✗ Save failed'
-                    : nodeData.status || 'Autosave'}
-            </p>
-          </div>
-        ) : null}
+          {nodeData.mode === 'markdown' ? (
+            <div className='mt-3 flex justify-end'>
+              <p className='font-mono text-xs text-muted-foreground'>
+                {nodeData.busy
+                  ? 'Saving...'
+                  : nodeData.status === 'Autosaved'
+                    ? '✓ Saved'
+                    : nodeData.status === 'Autosave failed'
+                      ? '✗ Save failed'
+                      : nodeData.status || 'Autosave'}
+              </p>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -999,7 +1001,7 @@ function CharacterCardNodeComponent({
   data,
 }: NodeProps<CharacterCardCanvasNode>) {
   return (
-    <div className='relative w-115 overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+    <div className='relative w-115 overflow-visible'>
       {data.hasIncomingConnection ? (
         <>
           <Handle
@@ -1057,56 +1059,58 @@ function CharacterCardNodeComponent({
         </>
       ) : null}
 
-      {/* header */}
-      <div className='flex items-center gap-2 border-b-2 border-black bg-[#FF6B6B] px-4 py-2.5'>
-        <span className='text-xs font-black uppercase tracking-widest'>
-          Character
-        </span>
-      </div>
-
-      <div className='space-y-3 p-4'>
-        <div className='rounded-xl border-2 border-black bg-[#F7F4EC] px-4 py-3'>
-          <input
-            value={data.name}
-            onChange={(event) => data.onNameChange(event.target.value)}
-            placeholder='Character name'
-            className='nodrag nowheel nopan w-full border-0 bg-transparent text-center text-lg font-black leading-tight outline-none placeholder:text-black/30'
-          />
+      <div className='overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+        {/* header */}
+        <div className='flex items-center gap-2 border-b-2 border-black bg-[#FF6B6B] px-4 py-2.5'>
+          <span className='text-xs font-black uppercase tracking-widest'>
+            Character
+          </span>
         </div>
-        <div className='min-h-22 rounded-xl border-2 border-black bg-[#F7F4EC] px-4 py-3'>
+
+        <div className='space-y-3 p-4'>
+          <div className='rounded-xl border-2 border-black bg-[#F7F4EC] px-4 py-3'>
+            <input
+              value={data.name}
+              onChange={(event) => data.onNameChange(event.target.value)}
+              placeholder='Character name'
+              className='nodrag nowheel nopan w-full border-0 bg-transparent text-center text-lg font-black leading-tight outline-none placeholder:text-black/30'
+            />
+          </div>
+          <div className='min-h-22 rounded-xl border-2 border-black bg-[#F7F4EC] px-4 py-3'>
+            <textarea
+              value={data.description}
+              onChange={(event) => data.onDescriptionChange(event.target.value)}
+              placeholder='Short description of who this character is'
+              className='nodrag nowheel nopan min-h-16 w-full resize-y border-0 bg-transparent text-sm leading-snug text-foreground/90 outline-none'
+            />
+          </div>
+        </div>
+
+        <div className='mx-4 mb-4 min-h-52 rounded-xl border-2 border-black bg-[#F7F4EC] px-4 py-4'>
+          <p className='mb-2 font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
+            Traits · Behaviour · Style
+          </p>
           <textarea
-            value={data.description}
-            onChange={(event) => data.onDescriptionChange(event.target.value)}
-            placeholder='Short description of who this character is'
-            className='nodrag nowheel nopan min-h-16 w-full resize-y border-0 bg-transparent text-sm leading-snug text-foreground/90 outline-none'
+            value={data.traitsText}
+            onChange={(event) => data.onTraitsChange(event.target.value)}
+            placeholder={
+              'Behavior: ...\nStyle: ...\nPersonality: ...\nGoals: ...\nNotes: ...'
+            }
+            className='nodrag nowheel nopan min-h-44 w-full resize-y border-0 bg-transparent font-mono text-sm leading-relaxed text-foreground/90 outline-none'
           />
         </div>
-      </div>
 
-      <div className='mx-4 mb-4 min-h-52 rounded-xl border-2 border-black bg-[#F7F4EC] px-4 py-4'>
-        <p className='mb-2 font-mono text-[10px] font-bold uppercase tracking-widest text-black/50'>
-          Traits · Behaviour · Style
-        </p>
-        <textarea
-          value={data.traitsText}
-          onChange={(event) => data.onTraitsChange(event.target.value)}
-          placeholder={
-            'Behavior: ...\nStyle: ...\nPersonality: ...\nGoals: ...\nNotes: ...'
-          }
-          className='nodrag nowheel nopan min-h-44 w-full resize-y border-0 bg-transparent font-mono text-sm leading-relaxed text-foreground/90 outline-none'
-        />
-      </div>
-
-      <div className='flex justify-end px-4 pb-3'>
-        <p className='font-mono text-xs text-muted-foreground'>
-          {data.saveState === 'saving'
-            ? 'Saving...'
-            : data.saveState === 'saved'
-              ? '✓ Saved'
-              : data.saveState === 'error'
-                ? data.saveMessage || '✗ Save failed'
-                : data.saveMessage || 'Autosave'}
-        </p>
+        <div className='flex justify-end px-4 pb-3'>
+          <p className='font-mono text-xs text-muted-foreground'>
+            {data.saveState === 'saving'
+              ? 'Saving...'
+              : data.saveState === 'saved'
+                ? '✓ Saved'
+                : data.saveState === 'error'
+                  ? data.saveMessage || '✗ Save failed'
+                  : data.saveMessage || 'Autosave'}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -1114,7 +1118,7 @@ function CharacterCardNodeComponent({
 
 function StyleCardNodeComponent({ data }: NodeProps<StyleCardCanvasNode>) {
   return (
-    <div className='relative w-130 overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+    <div className='relative w-130 overflow-visible'>
       {data.hasOutgoingConnection ? (
         <>
           <Handle
@@ -1144,81 +1148,83 @@ function StyleCardNodeComponent({ data }: NodeProps<StyleCardCanvasNode>) {
         </>
       ) : null}
 
-      {/* header */}
-      <div className='flex items-center justify-between border-b-2 border-black bg-[#4ECDC4] px-4 py-2.5'>
-        <span className='text-xs font-black uppercase tracking-widest'>
-          Style Guide
-        </span>
-        <span className='font-mono text-xs font-bold'>
-          {data.name || 'Project Style'}
-        </span>
-      </div>
+      <div className='overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+        {/* header */}
+        <div className='flex items-center justify-between border-b-2 border-black bg-[#4ECDC4] px-4 py-2.5'>
+          <span className='text-xs font-black uppercase tracking-widest'>
+            Style Guide
+          </span>
+          <span className='font-mono text-xs font-bold'>
+            {data.name || 'Project Style'}
+          </span>
+        </div>
 
-      <div className='space-y-0 divide-y-2 divide-black p-0'>
-        {[
-          {
-            label: 'Writing Style',
-            value: data.writingStyle,
-            placeholder:
-              'Rewrite/retouch voice, diction, tone, and narration style.',
-            onChange: data.onWritingStyleChange,
-          },
-          {
-            label: 'Character Style',
-            value: data.characterStyle,
-            placeholder:
-              'General character portrayal, voice consistency, and behavior framing.',
-            onChange: data.onCharacterStyleChange,
-          },
-          {
-            label: 'Art Style',
-            value: data.artStyle,
-            placeholder:
-              'Visual language, camera mood, palette, and art direction.',
-            onChange: data.onArtStyleChange,
-          },
-          {
-            label: 'Storytelling Pacing',
-            value: data.storytellingPacing,
-            placeholder:
-              'Rhythm, beat spacing, tension curve, and cadence guidance.',
-            onChange: data.onStorytellingPacingChange,
-          },
-          {
-            label: 'Additional Dimensions',
-            value: data.extrasText,
-            placeholder:
-              'Humor: dry and situational\nDialogue density: sparse but sharp',
-            onChange: data.onExtrasTextChange,
-            mono: true,
-          },
-        ].map(({ label, value, placeholder, onChange, mono }) => (
-          <div key={label} className='bg-[#F7F4EC] px-4 py-3'>
-            <p
-              className='mb-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-[#4ECDC4]'
-              style={{ color: '#2A9E96' }}>
-              {label}
-            </p>
-            <textarea
-              value={value}
-              onChange={(event) => onChange(event.target.value)}
-              placeholder={placeholder}
-              className={`nodrag nowheel nopan min-h-16 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none ${mono ? 'font-mono' : ''}`}
-            />
-          </div>
-        ))}
-      </div>
+        <div className='space-y-0 divide-y-2 divide-black p-0'>
+          {[
+            {
+              label: 'Writing Style',
+              value: data.writingStyle,
+              placeholder:
+                'Rewrite/retouch voice, diction, tone, and narration style.',
+              onChange: data.onWritingStyleChange,
+            },
+            {
+              label: 'Character Style',
+              value: data.characterStyle,
+              placeholder:
+                'General character portrayal, voice consistency, and behavior framing.',
+              onChange: data.onCharacterStyleChange,
+            },
+            {
+              label: 'Art Style',
+              value: data.artStyle,
+              placeholder:
+                'Visual language, camera mood, palette, and art direction.',
+              onChange: data.onArtStyleChange,
+            },
+            {
+              label: 'Storytelling Pacing',
+              value: data.storytellingPacing,
+              placeholder:
+                'Rhythm, beat spacing, tension curve, and cadence guidance.',
+              onChange: data.onStorytellingPacingChange,
+            },
+            {
+              label: 'Additional Dimensions',
+              value: data.extrasText,
+              placeholder:
+                'Humor: dry and situational\nDialogue density: sparse but sharp',
+              onChange: data.onExtrasTextChange,
+              mono: true,
+            },
+          ].map(({ label, value, placeholder, onChange, mono }) => (
+            <div key={label} className='bg-[#F7F4EC] px-4 py-3'>
+              <p
+                className='mb-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-[#4ECDC4]'
+                style={{ color: '#2A9E96' }}>
+                {label}
+              </p>
+              <textarea
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+                placeholder={placeholder}
+                className={`nodrag nowheel nopan min-h-16 w-full resize-y border-0 bg-transparent text-sm leading-relaxed text-foreground/90 outline-none ${mono ? 'font-mono' : ''}`}
+              />
+            </div>
+          ))}
+        </div>
 
-      <div className='flex justify-end border-t-2 border-black bg-white px-4 py-2.5'>
-        <p className='font-mono text-xs text-muted-foreground'>
-          {data.saveState === 'saving'
-            ? 'Saving...'
-            : data.saveState === 'saved'
-              ? '✓ Saved'
-              : data.saveState === 'error'
-                ? data.saveMessage || '✗ Save failed'
-                : data.saveMessage || 'Autosave'}
-        </p>
+        <div className='flex justify-end border-t-2 border-black bg-white px-4 py-2.5'>
+          <p className='font-mono text-xs text-muted-foreground'>
+            {data.saveState === 'saving'
+              ? 'Saving...'
+              : data.saveState === 'saved'
+                ? '✓ Saved'
+                : data.saveState === 'error'
+                  ? data.saveMessage || '✗ Save failed'
+                  : data.saveMessage || 'Autosave'}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -1228,7 +1234,7 @@ function StoryboardCardNodeComponent({
   data,
 }: NodeProps<StoryboardCardCanvasNode>) {
   return (
-    <div className='relative w-180 overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+    <div className='relative w-180 overflow-visible'>
       {data.hasIncomingConnection ? (
         <>
           <Handle
@@ -1286,157 +1292,159 @@ function StoryboardCardNodeComponent({
         </>
       ) : null}
 
-      {/* header */}
-      <div className='flex items-center gap-3 border-b-2 border-black bg-[#FF9F1C] px-4 py-2.5'>
-        <span className='text-xs font-black uppercase tracking-widest'>
-          Storyboard
-        </span>
-        <input
-          value={data.title}
-          onChange={(event) => data.onTitleChange(event.target.value)}
-          placeholder='Storyboard title'
-          className='nodrag nowheel nopan flex-1 border-0 bg-transparent text-sm font-bold outline-none placeholder:text-black/30'
-        />
-      </div>
+      <div className='overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+        {/* header */}
+        <div className='flex items-center gap-3 border-b-2 border-black bg-[#FF9F1C] px-4 py-2.5'>
+          <span className='text-xs font-black uppercase tracking-widest'>
+            Storyboard
+          </span>
+          <input
+            value={data.title}
+            onChange={(event) => data.onTitleChange(event.target.value)}
+            placeholder='Storyboard title'
+            className='nodrag nowheel nopan flex-1 border-0 bg-transparent text-sm font-bold outline-none placeholder:text-black/30'
+          />
+        </div>
 
-      <div className='space-y-3 p-4'>
-        {!data.frames.length ? (
-          <div className='rounded-xl border-2 border-black bg-[#FF9F1C]/20 p-4 text-sm font-medium'>
-            {data.saveState === 'generating'
-              ? data.saveMessage || 'Generating storyboard descriptions...'
-              : 'No frames yet.'}
-          </div>
-        ) : null}
-
-        {data.frames.map((frame) => (
-          <div
-            key={`${data.storyboardId}-${frame.frameNumber}`}
-            className='overflow-hidden rounded-xl border-2 border-black bg-[#F7F4EC]'>
-            <div className='flex items-center gap-2 border-b-2 border-black bg-[#FF9F1C]/30 px-3 py-1.5'>
-              <span className='font-mono text-xs font-black'>
-                Frame {frame.frameNumber}
-              </span>
+        <div className='space-y-3 p-4'>
+          {!data.frames.length ? (
+            <div className='rounded-xl border-2 border-black bg-[#FF9F1C]/20 p-4 text-sm font-medium'>
+              {data.saveState === 'generating'
+                ? data.saveMessage || 'Generating storyboard descriptions...'
+                : 'No frames yet.'}
             </div>
-            <div className='p-3'>
-              <div className='grid grid-cols-[220px_1fr] gap-3'>
-                <div className='space-y-2'>
-                  <div className='flex h-32 items-center justify-center overflow-hidden rounded-xl border-2 border-black bg-white text-sm'>
-                    {frame.imageUrl ? (
-                      <img
-                        src={frame.imageUrl}
-                        alt={`Storyboard frame ${frame.frameNumber}`}
-                        className='h-full w-full rounded-xl object-cover'
-                        onError={(event) => {
-                          const target = event.currentTarget;
-                          const baseUrl = frame.imageUrl || '';
-                          if (!baseUrl) {
-                            return;
-                          }
+          ) : null}
 
-                          const retryCount = Number(
-                            target.dataset.retryCount || '0',
-                          );
-                          if (retryCount >= 4) {
-                            return;
-                          }
-
-                          target.dataset.retryCount = String(retryCount + 1);
-                          window.setTimeout(
-                            () => {
-                              const separator = baseUrl.includes('?')
-                                ? '&'
-                                : '?';
-                              target.src = `${baseUrl}${separator}retry=${Date.now()}`;
-                            },
-                            500 * (retryCount + 1),
-                          );
-                        }}
-                      />
-                    ) : frame.imageStatus === 'pending' ? (
-                      <span className='animate-pulse font-mono text-xs text-muted-foreground'>
-                        Generating...
-                      </span>
-                    ) : frame.imageStatus === 'failed' ? (
-                      <button
-                        type='button'
-                        className='nodrag rounded-lg border-2 border-black bg-[#FF6B6B] px-2 py-1 font-mono text-xs font-bold'
-                        onClick={() =>
-                          data.onFrameRetryImage(frame.frameNumber)
-                        }>
-                        Failed · Retry
-                      </button>
-                    ) : (
-                      <span className='font-mono text-xs text-muted-foreground'>
-                        Frame image
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <textarea
-                  value={frame.description}
-                  onChange={(event) =>
-                    data.onFrameDescriptionChange(
-                      frame.frameNumber,
-                      event.target.value,
-                    )
-                  }
-                  placeholder='Detailed frame description, camera angle, action, character and design notes.'
-                  className='nodrag nowheel nopan min-h-32 w-full resize-y rounded-xl border-2 border-black bg-white px-3 py-2 text-sm leading-relaxed outline-none focus:ring-2 focus:ring-black'
-                />
+          {data.frames.map((frame) => (
+            <div
+              key={`${data.storyboardId}-${frame.frameNumber}`}
+              className='overflow-hidden rounded-xl border-2 border-black bg-[#F7F4EC]'>
+              <div className='flex items-center gap-2 border-b-2 border-black bg-[#FF9F1C]/30 px-3 py-1.5'>
+                <span className='font-mono text-xs font-black'>
+                  Frame {frame.frameNumber}
+                </span>
               </div>
+              <div className='p-3'>
+                <div className='grid grid-cols-[220px_1fr] gap-3'>
+                  <div className='space-y-2'>
+                    <div className='flex h-32 items-center justify-center overflow-hidden rounded-xl border-2 border-black bg-white text-sm'>
+                      {frame.imageUrl ? (
+                        <img
+                          src={frame.imageUrl}
+                          alt={`Storyboard frame ${frame.frameNumber}`}
+                          className='h-full w-full rounded-xl object-cover'
+                          onError={(event) => {
+                            const target = event.currentTarget;
+                            const baseUrl = frame.imageUrl || '';
+                            if (!baseUrl) {
+                              return;
+                            }
 
-              <div className='mt-2 flex items-center justify-between gap-3'>
-                <p className='font-mono text-xs text-muted-foreground'>
-                  {frame.cameraAngle || frame.cameraMovement
-                    ? `${frame.cameraAngle || 'n/a'} / ${frame.cameraMovement || 'static'}`
-                    : 'Camera in description'}
-                </p>
-                <label className='flex items-center gap-2 font-mono text-xs font-bold text-[#FF6B6B]'>
-                  Duration
-                  <input
-                    type='number'
-                    min={0.1}
-                    step={0.1}
-                    value={
-                      Number.isFinite(frame.durationSeconds)
-                        ? frame.durationSeconds
-                        : 3
-                    }
+                            const retryCount = Number(
+                              target.dataset.retryCount || '0',
+                            );
+                            if (retryCount >= 4) {
+                              return;
+                            }
+
+                            target.dataset.retryCount = String(retryCount + 1);
+                            window.setTimeout(
+                              () => {
+                                const separator = baseUrl.includes('?')
+                                  ? '&'
+                                  : '?';
+                                target.src = `${baseUrl}${separator}retry=${Date.now()}`;
+                              },
+                              500 * (retryCount + 1),
+                            );
+                          }}
+                        />
+                      ) : frame.imageStatus === 'pending' ? (
+                        <span className='animate-pulse font-mono text-xs text-muted-foreground'>
+                          Generating...
+                        </span>
+                      ) : frame.imageStatus === 'failed' ? (
+                        <button
+                          type='button'
+                          className='nodrag rounded-lg border-2 border-black bg-[#FF6B6B] px-2 py-1 font-mono text-xs font-bold'
+                          onClick={() =>
+                            data.onFrameRetryImage(frame.frameNumber)
+                          }>
+                          Failed · Retry
+                        </button>
+                      ) : (
+                        <span className='font-mono text-xs text-muted-foreground'>
+                          Frame image
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <textarea
+                    value={frame.description}
                     onChange={(event) =>
-                      data.onFrameDurationChange(
+                      data.onFrameDescriptionChange(
                         frame.frameNumber,
-                        Number(event.target.value),
+                        event.target.value,
                       )
                     }
-                    className='nodrag nowheel nopan h-7 w-18 rounded-lg border-2 border-black bg-white px-2 font-mono text-xs outline-none'
+                    placeholder='Detailed frame description, camera angle, action, character and design notes.'
+                    className='nodrag nowheel nopan min-h-32 w-full resize-y rounded-xl border-2 border-black bg-white px-3 py-2 text-sm leading-relaxed outline-none focus:ring-2 focus:ring-black'
                   />
-                </label>
+                </div>
+
+                <div className='mt-2 flex items-center justify-between gap-3'>
+                  <p className='font-mono text-xs text-muted-foreground'>
+                    {frame.cameraAngle || frame.cameraMovement
+                      ? `${frame.cameraAngle || 'n/a'} / ${frame.cameraMovement || 'static'}`
+                      : 'Camera in description'}
+                  </p>
+                  <label className='flex items-center gap-2 font-mono text-xs font-bold text-[#FF6B6B]'>
+                    Duration
+                    <input
+                      type='number'
+                      min={0.1}
+                      step={0.1}
+                      value={
+                        Number.isFinite(frame.durationSeconds)
+                          ? frame.durationSeconds
+                          : 3
+                      }
+                      onChange={(event) =>
+                        data.onFrameDurationChange(
+                          frame.frameNumber,
+                          Number(event.target.value),
+                        )
+                      }
+                      className='nodrag nowheel nopan h-7 w-18 rounded-lg border-2 border-black bg-white px-2 font-mono text-xs outline-none'
+                    />
+                  </label>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          ))}
 
-        <button
-          type='button'
-          className='nodrag w-full rounded-xl border-2 border-black bg-[#CCFF00] py-3 text-sm font-black uppercase tracking-wide shadow-[3px_3px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#1A1A1A]'
-          onClick={data.onFrameAdd}>
-          + Add Frame
-        </button>
-      </div>
+          <button
+            type='button'
+            className='nodrag w-full rounded-xl border-2 border-black bg-[#CCFF00] py-3 text-sm font-black uppercase tracking-wide shadow-[3px_3px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#1A1A1A]'
+            onClick={data.onFrameAdd}>
+            + Add Frame
+          </button>
+        </div>
 
-      <div className='flex justify-end border-t-2 border-black bg-white px-4 py-2.5'>
-        <p className='font-mono text-xs text-muted-foreground'>
-          {data.saveState === 'generating'
-            ? data.saveMessage || 'Generating storyboard...'
-            : data.saveState === 'saving'
-              ? 'Saving...'
-              : data.saveState === 'saved'
-                ? '✓ Saved'
-                : data.saveState === 'error'
-                  ? data.saveMessage || '✗ Save failed'
-                  : data.saveMessage || 'Autosave'}
-        </p>
+        <div className='flex justify-end border-t-2 border-black bg-white px-4 py-2.5'>
+          <p className='font-mono text-xs text-muted-foreground'>
+            {data.saveState === 'generating'
+              ? data.saveMessage || 'Generating storyboard...'
+              : data.saveState === 'saving'
+                ? 'Saving...'
+                : data.saveState === 'saved'
+                  ? '✓ Saved'
+                  : data.saveState === 'error'
+                    ? data.saveMessage || '✗ Save failed'
+                    : data.saveMessage || 'Autosave'}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -1496,7 +1504,7 @@ function CharacterDesignNodeComponent({
 
   return (
     <div
-      className={`relative overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A] ${
+      className={`relative overflow-visible ${
         isPickedMode ? 'w-120' : 'w-220'
       }`}>
       {data.hasIncomingConnection ? (
@@ -1556,117 +1564,119 @@ function CharacterDesignNodeComponent({
         </>
       ) : null}
 
-      {/* header */}
-      <div className='flex items-center justify-between gap-3 border-b-2 border-black bg-[#C084FC] px-4 py-2.5'>
-        <span className='text-xs font-black uppercase tracking-widest'>
-          Design · {displayName}
-        </span>
-        {data.mode === 'options' ? (
-          <div className='flex items-center gap-2'>
-            {data.selectedOptionId ? (
+      <div className='overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0_#1A1A1A]'>
+        {/* header */}
+        <div className='flex items-center justify-between gap-3 border-b-2 border-black bg-[#C084FC] px-4 py-2.5'>
+          <span className='text-xs font-black uppercase tracking-widest'>
+            Design · {displayName}
+          </span>
+          {data.mode === 'options' ? (
+            <div className='flex items-center gap-2'>
+              {data.selectedOptionId ? (
+                <button
+                  type='button'
+                  className='nodrag rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-bold uppercase shadow-[2px_2px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#1A1A1A] disabled:opacity-50'
+                  disabled={data.busy}
+                  onClick={data.onCancel}>
+                  Cancel
+                </button>
+              ) : null}
               <button
                 type='button'
-                className='nodrag rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-bold uppercase shadow-[2px_2px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#1A1A1A] disabled:opacity-50'
+                className='nodrag rounded-lg border-2 border-black bg-[#1A1A1A] px-3 py-1 text-xs font-bold uppercase text-[#C084FC] shadow-[2px_2px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#4A4A4A] disabled:opacity-50'
                 disabled={data.busy}
-                onClick={data.onCancel}>
-                Cancel
+                onClick={data.onRetry}>
+                {data.busy ? 'Generating...' : 'Retry'}
               </button>
-            ) : null}
+            </div>
+          ) : (
             <button
               type='button'
-              className='nodrag rounded-lg border-2 border-black bg-[#1A1A1A] px-3 py-1 text-xs font-bold uppercase text-[#C084FC] shadow-[2px_2px_0_#4A4A4A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#4A4A4A] disabled:opacity-50'
+              className='nodrag rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-bold uppercase shadow-[2px_2px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#1A1A1A] disabled:opacity-50'
               disabled={data.busy}
-              onClick={data.onRetry}>
-              {data.busy ? 'Generating...' : 'Retry'}
+              onClick={data.onEdit}>
+              {data.busy ? 'Generating...' : 'Edit'}
             </button>
-          </div>
-        ) : (
-          <button
-            type='button'
-            className='nodrag rounded-lg border-2 border-black bg-white px-3 py-1 text-xs font-bold uppercase shadow-[2px_2px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#1A1A1A] disabled:opacity-50'
-            disabled={data.busy}
-            onClick={data.onEdit}>
-            {data.busy ? 'Generating...' : 'Edit'}
-          </button>
-        )}
-      </div>
+          )}
+        </div>
 
-      <div className='p-4'>
-        {data.error ? (
-          <p className='mb-3 rounded-lg border-2 border-black bg-[#FF6B6B]/20 px-3 py-2 font-mono text-xs text-[#FF6B6B]'>
-            {data.error}
-          </p>
-        ) : null}
+        <div className='p-4'>
+          {data.error ? (
+            <p className='mb-3 rounded-lg border-2 border-black bg-[#FF6B6B]/20 px-3 py-2 font-mono text-xs text-[#FF6B6B]'>
+              {data.error}
+            </p>
+          ) : null}
 
-        {data.mode === 'picked' && selected ? (
-          <button
-            type='button'
-            className='nodrag block w-full overflow-hidden rounded-2xl border-2 border-black bg-[#F7F4EC] p-2 shadow-[3px_3px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#1A1A1A]'
-            disabled={data.busy}
-            onClick={data.onEdit}>
-            <img
-              src={resolveImageSrc(
-                selected.id,
-                selected.imageUrl || selected.imageDataUrl || '',
-              )}
-              alt={`${displayName} selected design`}
-              className='aspect-square w-full rounded-xl object-cover'
-              onError={() => {
-                queueImageRetry(
+          {data.mode === 'picked' && selected ? (
+            <button
+              type='button'
+              className='nodrag block w-full overflow-hidden rounded-2xl border-2 border-black bg-[#F7F4EC] p-2 shadow-[3px_3px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#1A1A1A]'
+              disabled={data.busy}
+              onClick={data.onEdit}>
+              <img
+                src={resolveImageSrc(
                   selected.id,
                   selected.imageUrl || selected.imageDataUrl || '',
-                );
-              }}
-            />
-          </button>
-        ) : (
-          <div className='grid grid-cols-3 items-start gap-4'>
-            {data.options.map((option) => {
-              const isSelected = option.id === data.selectedOptionId;
+                )}
+                alt={`${displayName} selected design`}
+                className='aspect-square w-full rounded-xl object-cover'
+                onError={() => {
+                  queueImageRetry(
+                    selected.id,
+                    selected.imageUrl || selected.imageDataUrl || '',
+                  );
+                }}
+              />
+            </button>
+          ) : (
+            <div className='grid grid-cols-3 items-start gap-4'>
+              {data.options.map((option) => {
+                const isSelected = option.id === data.selectedOptionId;
 
-              return (
-                <button
-                  key={option.id}
-                  type='button'
-                  disabled={data.busy}
-                  className={`nodrag overflow-hidden rounded-2xl border-2 border-black bg-[#F7F4EC] p-1 transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                    isSelected
-                      ? 'shadow-[0px_0px_0_#1A1A1A] translate-x-0.5 translate-y-0.5'
-                      : 'shadow-[3px_3px_0_#1A1A1A] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#1A1A1A]'
-                  }`}
-                  onClick={() => data.onPick(option.id)}>
-                  {isSelected ? (
-                    <div className='absolute -right-1 -top-1 rounded-full border-2 border-black bg-[#C084FC] px-1.5 py-0.5 font-mono text-[10px] font-black'>
-                      ✓
-                    </div>
-                  ) : null}
-                  <img
-                    src={resolveImageSrc(
-                      option.id,
-                      option.imageUrl || option.imageDataUrl || '',
-                    )}
-                    alt={`${displayName} design option`}
-                    className='aspect-square w-full rounded-xl object-cover'
-                    onError={() => {
-                      queueImageRetry(
+                return (
+                  <button
+                    key={option.id}
+                    type='button'
+                    disabled={data.busy}
+                    className={`nodrag overflow-hidden rounded-2xl border-2 border-black bg-[#F7F4EC] p-1 transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                      isSelected
+                        ? 'shadow-[0px_0px_0_#1A1A1A] translate-x-0.5 translate-y-0.5'
+                        : 'shadow-[3px_3px_0_#1A1A1A] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0_#1A1A1A]'
+                    }`}
+                    onClick={() => data.onPick(option.id)}>
+                    {isSelected ? (
+                      <div className='absolute -right-1 -top-1 rounded-full border-2 border-black bg-[#C084FC] px-1.5 py-0.5 font-mono text-[10px] font-black'>
+                        ✓
+                      </div>
+                    ) : null}
+                    <img
+                      src={resolveImageSrc(
                         option.id,
                         option.imageUrl || option.imageDataUrl || '',
-                      );
-                    }}
-                  />
-                </button>
-              );
-            })}
-          </div>
-        )}
+                      )}
+                      alt={`${displayName} design option`}
+                      className='aspect-square w-full rounded-xl object-cover'
+                      onError={() => {
+                        queueImageRetry(
+                          option.id,
+                          option.imageUrl || option.imageDataUrl || '',
+                        );
+                      }}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
-        {!data.options.length ? (
-          <p className='font-mono text-sm text-muted-foreground'>
-            {data.busy
-              ? 'Generating design options...'
-              : 'No options yet. Use Retry to generate.'}
-          </p>
-        ) : null}
+          {!data.options.length ? (
+            <p className='font-mono text-sm text-muted-foreground'>
+              {data.busy
+                ? 'Generating design options...'
+                : 'No options yet. Use Retry to generate.'}
+            </p>
+          ) : null}
+        </div>
       </div>
     </div>
   );
