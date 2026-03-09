@@ -18,6 +18,7 @@ import {
 import {
   Captions,
   CaptionsOff,
+  Download,
   LogOut,
   Mic,
   MicOff,
@@ -33,6 +34,7 @@ import {
   type CreativeNodeData,
 } from '@/features/flow/nodes';
 import { createAgentSocket } from '@/lib/ws-client';
+import { downloadStoryboardAsPdf } from '@/features/storyboard/storyboard-pdf';
 
 import '@xyflow/react/dist/style.css';
 
@@ -438,6 +440,7 @@ type StoryboardCardNodeData = {
   onFrameDurationChange: (frameNumber: number, value: number) => void;
   onFrameRetryImage: (frameNumber: number) => void;
   onFrameAdd: () => void;
+  onDownloadPdf: () => void;
 };
 
 function getPendingStoryRewrite(story?: StoryRecord | null) {
@@ -1313,6 +1316,15 @@ function StoryboardCardNodeComponent({
             placeholder='Storyboard title'
             className='nodrag nowheel nopan flex-1 border-0 bg-transparent text-sm font-bold outline-none placeholder:text-black/30'
           />
+          <button
+            type='button'
+            title='Download as PDF'
+            className='nodrag flex items-center gap-1.5 rounded-lg border-2 border-black bg-white px-2.5 py-1 text-xs font-bold shadow-[2px_2px_0_#1A1A1A] transition hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[0px_0px_0_#1A1A1A] disabled:opacity-40'
+            disabled={data.frames.length === 0}
+            onClick={data.onDownloadPdf}>
+            <Download className='h-3.5 w-3.5' />
+            PDF
+          </button>
         </div>
 
         <div className='space-y-3 p-4'>
@@ -5570,6 +5582,9 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           },
           onFrameRetryImage: (frameNumber: number) => {
             void regenerateStoryboardFrameImage(storyboard.id, frameNumber);
+          },
+          onDownloadPdf: () => {
+            void downloadStoryboardAsPdf(draft.title, draft.frames);
           },
           onFrameAdd: () => {
             updateStoryboardDraft(storyboard.id, (existing) => ({
