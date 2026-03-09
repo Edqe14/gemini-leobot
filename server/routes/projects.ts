@@ -925,3 +925,87 @@ projectsRouter.delete(
     });
   },
 );
+
+const saveReferenceImagesSchema = z.object({
+  imageUrls: z.array(z.string().url()).min(1).max(20),
+});
+
+projectsRouter.post(
+  '/api/projects/:projectId/character-nodes/:nodeId/references',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const { imageUrls } = saveReferenceImagesSchema.parse(body);
+
+    const node = await prisma.characterNode.findFirst({
+      where: { id: nodeId, projectId },
+      select: { id: true },
+    });
+    if (!node) {
+      return c.json({ error: 'Character node not found' }, 404);
+    }
+
+    const updated = await prisma.characterNode.update({
+      where: { id: nodeId },
+      data: { inspirationUrls: imageUrls },
+      select: { id: true, inspirationUrls: true },
+    });
+
+    return c.json({
+      ok: true,
+      nodeId: updated.id,
+      inspirationUrls: updated.inspirationUrls,
+    });
+  },
+);
+
+projectsRouter.post(
+  '/api/projects/:projectId/storyboard-nodes/:nodeId/references',
+  async (c) => {
+    const session = await getSessionFromHeaders(c.req.raw.headers);
+    if (!session) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const projectId = c.req.param('projectId');
+    const nodeId = c.req.param('nodeId');
+    const project = await requireProjectAccess(session.user.id, projectId);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const body = await c.req.json();
+    const { imageUrls } = saveReferenceImagesSchema.parse(body);
+
+    const node = await prisma.storyboardNode.findFirst({
+      where: { id: nodeId, projectId },
+      select: { id: true },
+    });
+    if (!node) {
+      return c.json({ error: 'Storyboard node not found' }, 404);
+    }
+
+    const updated = await prisma.storyboardNode.update({
+      where: { id: nodeId },
+      data: { referenceImageUrls: imageUrls },
+      select: { id: true, referenceImageUrls: true },
+    });
+
+    return c.json({
+      ok: true,
+      nodeId: updated.id,
+      referenceImageUrls: updated.referenceImageUrls,
+    });
+  },
+);

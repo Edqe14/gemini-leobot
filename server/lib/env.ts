@@ -70,6 +70,8 @@ const envSchema = z
       .default(false),
     DEBUG_MONITOR_MAX_EVENTS: z.coerce.number().int().min(100).default(2000),
     WS_AUDIO_CHUNK_LOG_EVERY: z.coerce.number().int().min(1).default(20),
+    PEXELS_API_KEY: z.string().min(1).optional(),
+    PIXABAY_API_KEY: z.string().min(1).optional(),
   })
   .superRefine((value, context) => {
     const provider =

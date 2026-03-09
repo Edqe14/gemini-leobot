@@ -5346,3 +5346,106 @@ export async function updateStoryboardTool(context: ToolContext) {
     createIfMissingDefault: false,
   });
 }
+
+// ─── Search Image References ──────────────────────────────────────────────────
+
+const searchImageReferencesArgsSchema = z.object({
+  query: z.string().trim().min(1).max(500),
+  nodeId: z.string().trim().min(1),
+  nodeType: z.enum(['character', 'storyboard']),
+  count: z.coerce.number().int().min(1).max(20).default(12),
+});
+
+type PixabayHit = {
+  id: number;
+  webformatURL: string;
+  largeImageURL: string;
+  pageURL: string;
+  user: string;
+  userImageURL: string;
+  tags: string;
+};
+
+type PixabaySearchResponse = {
+  hits: PixabayHit[];
+};
+
+export async function searchImageReferencesTool(context: ToolContext) {
+  const access = await verifyProjectAccess(context);
+  if (!access.ok) {
+    return access;
+  }
+
+  if (!env.PIXABAY_API_KEY) {
+    return {
+      ok: false as const,
+      message:
+        'Image reference search requires a Pixabay API key. Add PIXABAY_API_KEY to your .env (free at pixabay.com/api/docs).',
+    };
+  }
+
+  const parsed = searchImageReferencesArgsSchema.safeParse(context.args);
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      message: `Invalid arguments: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+    };
+  }
+
+  const { query, nodeId, nodeType, count } = parsed.data;
+
+  const apiUrl =
+    `https://pixabay.com/api/?key=${encodeURIComponent(env.PIXABAY_API_KEY)}` +
+    `&q=${encodeURIComponent(query)}&image_type=photo&safesearch=true` +
+    `&per_page=${count}&lang=en`;
+
+  let pixabayData: PixabaySearchResponse;
+  try {
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      return {
+        ok: false as const,
+        message: `Pixabay API error: ${response.status} ${response.statusText}`,
+      };
+    }
+    pixabayData = (await response.json()) as PixabaySearchResponse;
+  } catch (error) {
+    return {
+      ok: false as const,
+      message: `Failed to fetch image references: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+
+  const results = (pixabayData.hits ?? []).map((hit) => ({
+    id: String(hit.id),
+    pageUrl: hit.pageURL,
+    srcMedium: hit.webformatURL,
+    srcLarge: hit.largeImageURL,
+    photographer: hit.user,
+    photographerUrl: `https://pixabay.com/users/${encodeURIComponent(hit.user)}/`,
+    alt: hit.tags,
+    licenseUrl: 'https://pixabay.com/service/license-summary/',
+  }));
+
+  context.emitEvent?.({
+    type: 'agent.image.references',
+    payload: {
+      projectId: context.projectId,
+      nodeId,
+      nodeType,
+      query,
+      results,
+    },
+  });
+
+  return {
+    ok: true as const,
+    resultCount: results.length,
+    query,
+    message: `Found ${results.length} reference image${
+      results.length === 1 ? '' : 's'
+    } for "${query}". Results are now shown in the reference panel.`,
+  };
+}

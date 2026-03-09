@@ -35,6 +35,10 @@ import {
 } from '@/features/flow/nodes';
 import { createAgentSocket } from '@/lib/ws-client';
 import { downloadStoryboardAsPdf } from '@/features/storyboard/storyboard-pdf';
+import {
+  ImageReferencesPanel,
+  type ImageRefPanelState,
+} from '@/components/image-references-panel';
 
 import '@xyflow/react/dist/style.css';
 
@@ -2380,6 +2384,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const [projectListCard, setProjectListCard] = useState<
     ProjectListItem[] | null
   >(null);
+  const [imageRefPanel, setImageRefPanel] = useState<ImageRefPanelState | null>(
+    null,
+  );
+  const [imageRefSaving, setImageRefSaving] = useState(false);
   const initialProjectIdRef = useRef(activeProjectId);
   const activeProjectIdRef = useRef(activeProjectId);
   const socketClientRef = useRef<ReturnType<typeof createAgentSocket> | null>(
@@ -3279,6 +3287,49 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           return;
         }
 
+        if (message.type === 'agent.image.references') {
+          const payload =
+            message.payload && typeof message.payload === 'object'
+              ? (message.payload as Record<string, unknown>)
+              : null;
+          if (!payload) return;
+
+          const nodeId =
+            typeof payload.nodeId === 'string' ? payload.nodeId.trim() : '';
+          const nodeType =
+            payload.nodeType === 'character' ||
+            payload.nodeType === 'storyboard'
+              ? payload.nodeType
+              : null;
+          const query =
+            typeof payload.query === 'string' ? payload.query.trim() : '';
+          const rawResults = Array.isArray(payload.results)
+            ? payload.results
+            : [];
+
+          if (!nodeId || !nodeType || !query) return;
+
+          const results = rawResults
+            .filter(
+              (r): r is Record<string, unknown> =>
+                Boolean(r) && typeof r === 'object',
+            )
+            .map((r) => ({
+              id: typeof r.id === 'string' ? r.id : String(r.id ?? ''),
+              pageUrl: typeof r.pageUrl === 'string' ? r.pageUrl : '',
+              srcMedium: typeof r.srcMedium === 'string' ? r.srcMedium : '',
+              srcLarge: typeof r.srcLarge === 'string' ? r.srcLarge : '',
+              photographer:
+                typeof r.photographer === 'string' ? r.photographer : '',
+              photographerUrl:
+                typeof r.photographerUrl === 'string' ? r.photographerUrl : '',
+              alt: typeof r.alt === 'string' ? r.alt : '',
+            }));
+
+          setImageRefPanel({ nodeId, nodeType, query, results });
+          return;
+        }
+
         if (message.type === 'ws.audio.ingested') {
           const payload = message.payload as
             | { ingestedChunks?: number }
@@ -3721,6 +3772,38 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     setDebugTextInput('');
     setMicError('');
   }, [connected, debugTextInput, socketReady]);
+
+  const handleSaveImageReferences = useCallback(
+    async (
+      nodeId: string,
+      nodeType: 'character' | 'storyboard',
+      urls: string[],
+    ) => {
+      const projectId = activeProjectId.trim();
+      if (!projectId) return;
+
+      setImageRefSaving(true);
+      try {
+        const path =
+          nodeType === 'character'
+            ? `/api/projects/${projectId}/character-nodes/${nodeId}/references`
+            : `/api/projects/${projectId}/storyboard-nodes/${nodeId}/references`;
+
+        const response = await fetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageUrls: urls }),
+        });
+
+        if (response.ok) {
+          setImageRefPanel(null);
+        }
+      } finally {
+        setImageRefSaving(false);
+      }
+    },
+    [activeProjectId],
+  );
 
   useEffect(() => {
     const projectId = activeProjectId.trim();
@@ -5898,6 +5981,18 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
               )}
             </div>
           </div>
+        )}
+
+        {/* ── Image References Panel ── */}
+        {imageRefPanel && (
+          <ImageReferencesPanel
+            panel={imageRefPanel}
+            saving={imageRefSaving}
+            onClose={() => setImageRefPanel(null)}
+            onSave={(nodeId, nodeType, urls) => {
+              void handleSaveImageReferences(nodeId, nodeType, urls);
+            }}
+          />
         )}
 
         {/* ── Bottom: caption + mic controls ── */}

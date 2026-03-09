@@ -15,6 +15,7 @@ import {
   syncStoryNodeTool,
   updateCharacterBriefTool,
   upsertProjectStyleNodeTool,
+  searchImageReferencesTool,
 } from '../services/tools';
 
 export const ProjectAgent: AgentDefinition = {
@@ -535,6 +536,36 @@ export const ProjectAgent: AgentDefinition = {
       },
       handler: updateStoryboardTool,
     },
+    {
+      name: 'search_image_references',
+      description:
+        'Search Openverse (CC-licensed photo library) for visual reference images relevant to a character or storyboard node. Results are shown directly to the user in a reference panel — do not read out image URLs or describe individual results.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          query: {
+            type: Type.STRING,
+            description:
+              'Concrete, photographic search terms — use real-world nouns only (e.g. "blacksmith forge", "warrior armor", "misty forest"). Avoid fictional/fantasy adjectives, the word "character", style labels, or creative descriptions. 1–4 words maximum.',
+          },
+          nodeId: {
+            type: Type.STRING,
+            description:
+              'The characterNodeId or storyboardNodeId to associate the results with.',
+          },
+          nodeType: {
+            type: Type.STRING,
+            description: 'Either "character" or "storyboard".',
+          },
+          count: {
+            type: Type.NUMBER,
+            description: 'Number of results to fetch (1-20, default 12).',
+          },
+        },
+        required: ['query', 'nodeId', 'nodeType'],
+      },
+      handler: searchImageReferencesTool,
+    },
   ],
   toolInstructions: [
     'For factual project/account data (for example: what projects exist, project names, counts, recency, story status), call the list_projects tool before answering.',
@@ -558,6 +589,9 @@ export const ProjectAgent: AgentDefinition = {
     'Before generate_storyboard or update_storyboard, ensure story content exists (sync_story_node when needed) so frame generation has source narrative context.',
     'When the user asks to revise an existing storyboard, call update_storyboard (not generate_storyboard) so the current storyboard node is updated in place.',
     'Storyboard generation should use project style direction and character design context to produce detailed, actionable frame descriptions.',
+    'When the user asks for visual references, inspiration images, or example photos for a character or scene, call search_image_references with a concise, real-world photographic query (e.g. "blacksmith forge", "warrior armor", "village market") — not creative descriptions or fictional terms.',
+    "After creating or updating a character brief, you may proactively call search_image_references. Use the character's most concrete visual trait as the query (e.g. their occupation, key clothing, or setting), not their creative/fictional description.",
+    'search_image_references queries must be short real-world nouns (1-4 words). Never include words like "fantasy", "character", "inspiration", "epic", "magical", or fictional genre labels in the query.',
   ],
   capabilities: [
     '1. Create story nodes and prepare project story workspace.',

@@ -164,14 +164,15 @@ model StyleNode {
 }
 
 model StoryboardNode {
-  id         String   @id @default(auto()) @map("_id") @db.ObjectId
-  projectId  String   @db.ObjectId
-  title      String
-  shotsJson  String
-  positionX  Float?
-  positionY  Float?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  projectId           String   @db.ObjectId
+  title               String
+  shotsJson           String
+  referenceImageUrls  String[]
+  positionX           Float?
+  positionY           Float?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
