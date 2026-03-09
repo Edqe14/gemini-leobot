@@ -15,9 +15,10 @@ import {
   useEdgesState,
   useNodesState,
 } from '@xyflow/react';
-import { Captions, CaptionsOff, Mic, MicOff, User } from 'lucide-react';
+import { Captions, CaptionsOff, LogOut, Mic, MicOff, User } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AuthGate } from '@/components/auth-gate';
+import { authClient } from '@/lib/auth-client';
 import {
   initialEdges,
   initialNodes,
@@ -2355,6 +2356,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
     Record<string, CharacterDesignUiState>
   >({});
   const [debugTextInput, setDebugTextInput] = useState('');
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [projectListCard, setProjectListCard] = useState<
     ProjectListItem[] | null
   >(null);
@@ -5744,14 +5746,33 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
         {/* ── Top-right: user + debug overlay ── */}
         <div className='absolute right-5 top-5 z-10 flex flex-col items-end gap-2'>
-          <button
-            type='button'
-            className='flex h-10 w-10 items-center justify-center rounded-full border-2 border-black bg-white shadow-[2px_2px_0_#1A1A1A] hover:bg-[#EDEAD9]'>
-            <User className='h-5 w-5' />
-          </button>
-          <p className='font-mono text-right text-[11px] text-muted-foreground'>
-            {userName || 'profile'}
-          </p>
+          <div className='relative'>
+            <button
+              type='button'
+              onClick={() => setUserMenuOpen((open) => !open)}
+              className='flex h-10 w-10 items-center justify-center rounded-full border-2 border-black bg-white shadow-[2px_2px_0_#1A1A1A] hover:bg-[#EDEAD9]'>
+              <User className='h-5 w-5' />
+            </button>
+            {userMenuOpen && (
+              <div className='absolute right-0 top-12 z-20 min-w-[160px] rounded-xl border-2 border-black bg-white shadow-[3px_3px_0_#1A1A1A]'>
+                <div className='border-b-2 border-black px-4 py-2'>
+                  <p className='font-mono text-[11px] font-bold text-foreground truncate max-w-[140px]'>
+                    {userName || 'profile'}
+                  </p>
+                </div>
+                <button
+                  type='button'
+                  onClick={async () => {
+                    await authClient.signOut();
+                    window.location.href = '/';
+                  }}
+                  className='flex w-full items-center gap-2 px-4 py-2 text-left text-sm font-bold hover:bg-[#EDEAD9] rounded-b-[10px]'>
+                  <LogOut className='h-4 w-4' />
+                  Log out
+                </button>
+              </div>
+            )}
+          </div>
 
           {debugOverlayEnabled ? (
             <div className='flex flex-col items-end gap-2'>
