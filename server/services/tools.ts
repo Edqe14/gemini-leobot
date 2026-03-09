@@ -1291,35 +1291,32 @@ async function buildStoryboardReferenceImageParts(input: {
   }> = [];
 
   for (const reference of orderedReferences) {
-    const selectedFirst = reference.selectedDesignId
+    // Only attach the selected (or first available) design for each character.
+    // Attaching all options risks the model blending designs instead of using
+    // the one the user explicitly picked.
+    const selectedDesign = reference.selectedDesignId
       ? reference.allDesigns.find(
           (item) => item.id === reference.selectedDesignId,
         )
       : null;
 
-    const sequence = [
-      ...(selectedFirst ? [selectedFirst] : []),
-      ...reference.allDesigns.filter((item) => item.id !== selectedFirst?.id),
-    ];
-
-    for (const design of sequence) {
-      const imageUrl = normalizeStringValue(design.imageUrl);
-      if (!imageUrl || seenUrls.has(imageUrl)) {
-        continue;
-      }
-
-      seenUrls.add(imageUrl);
-      queued.push({
-        characterName: reference.characterName,
-        designId: normalizeStringValue(design.id) || 'unknown-design',
-        designPrompt: normalizeStringValue(design.prompt),
-        imageUrl,
-      });
-
-      if (queued.length >= 10) {
-        break;
-      }
+    const designToAttach = selectedDesign ?? reference.allDesigns[0] ?? null;
+    if (!designToAttach) {
+      continue;
     }
+
+    const imageUrl = normalizeStringValue(designToAttach.imageUrl);
+    if (!imageUrl || seenUrls.has(imageUrl)) {
+      continue;
+    }
+
+    seenUrls.add(imageUrl);
+    queued.push({
+      characterName: reference.characterName,
+      designId: normalizeStringValue(designToAttach.id) || 'unknown-design',
+      designPrompt: normalizeStringValue(designToAttach.prompt),
+      imageUrl,
+    });
 
     if (queued.length >= 10) {
       break;
@@ -2117,14 +2114,13 @@ function buildStoryboardFrameImagePrompt(input: {
       : input.characterDesignReferences
   )
     .map((reference) => {
-      const designLines = reference.allDesigns.length
-        ? reference.allDesigns
-            .map(
-              (design, index) =>
-                `    ${index + 1}) id=${design.id}; designPrompt=${design.prompt || 'N/A'}`,
-            )
-            .join('\n')
-        : '    No generated design options available yet.';
+      // Only surface the selected design in the text prompt — listing all
+      // options risks the model being influenced by non-selected descriptions.
+      const selectedDesign = reference.selectedDesignId
+        ? reference.allDesigns.find(
+            (item) => item.id === reference.selectedDesignId,
+          )
+        : (reference.allDesigns[0] ?? null);
 
       return [
         `- ${reference.characterName}`,
@@ -2132,10 +2128,8 @@ function buildStoryboardFrameImagePrompt(input: {
         `  - Brief: ${reference.briefMarkdown || 'N/A'}`,
         `  - Profile style cue: ${reference.profileStyle || 'N/A'}`,
         `  - Profile behavior cue: ${reference.profileBehavior || 'N/A'}`,
-        `  - Selected design id: ${reference.selectedDesignId || 'N/A'}`,
-        `  - Selected design prompt: ${reference.selectedDesignPrompt || 'N/A'}`,
-        '  - All design options:',
-        designLines,
+        `  - Active design id: ${selectedDesign?.id || 'N/A'}`,
+        `  - Active design prompt: ${reference.selectedDesignPrompt || selectedDesign?.prompt || 'N/A'}`,
       ].join('\n');
     })
     .join('\n');
@@ -2170,7 +2164,7 @@ function buildStoryboardFrameImagePrompt(input: {
     attachedReferenceLines,
     '',
     'Execution rules:',
-    '1) For each named frame character, use attached image references by [REF_xx] tag as the primary source of visual truth.',
+    '1) Each attached [REF_xx] image is the single selected design for that character — treat it as the definitive visual identity. Do NOT invent or blend a different appearance.',
     '2) Keep stable silhouette, outfit motifs, hairstyle, and color accents across frames.',
     '3) If frame character names are missing, infer cast from description but still anchor to provided design references.',
     '4) Do not ignore project art style; enforce it in lens language, lighting model, palette, and surface rendering.',
