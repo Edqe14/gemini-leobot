@@ -5,7 +5,10 @@ import path from 'node:path';
 import { prisma } from '../lib/db';
 import { env } from '../lib/env';
 import { z } from 'zod';
-import { allocateNodePositions } from './node-position';
+import {
+  allocateCharacterBriefPositions,
+  allocateNodePositions,
+} from './node-position';
 import type { AgentToolRuntimeEvent } from '../agents/types';
 
 type ToolContext = {
@@ -3753,7 +3756,7 @@ export async function generateCharacterBriefTool(context: ToolContext) {
     createdAt: Date;
     updatedAt: Date;
   }> = [];
-  const allocatedPositions = await allocateNodePositions(
+  const allocatedPositions = await allocateCharacterBriefPositions(
     projectId,
     draftsToCreate.length,
   );
@@ -3761,9 +3764,18 @@ export async function generateCharacterBriefTool(context: ToolContext) {
   for (const [index, draft] of draftsToCreate.entries()) {
     const allocatedPosition = allocatedPositions[index];
     const briefMarkdown = buildCharacterBriefMarkdown(draft);
-    const profileJson = Object.keys(draft.profile).length
-      ? JSON.stringify(draft.profile)
-      : null;
+    const characterPosition = {
+      x: allocatedPosition?.x ?? 640,
+      y: allocatedPosition?.y ?? 120,
+    };
+    const profileWithDesignPosition: CharacterProfilePayload = {
+      ...draft.profile,
+      characterDesignNodePosition: {
+        x: characterPosition.x + 760,
+        y: characterPosition.y,
+      },
+    };
+    const profileJson = JSON.stringify(profileWithDesignPosition);
 
     const node = await prisma.characterNode.create({
       data: {
@@ -3772,8 +3784,8 @@ export async function generateCharacterBriefTool(context: ToolContext) {
         briefMarkdown,
         profileJson,
         inspirationUrls: [],
-        positionX: allocatedPosition?.x ?? 640,
-        positionY: allocatedPosition?.y ?? 120,
+        positionX: characterPosition.x,
+        positionY: characterPosition.y,
       },
       select: {
         id: true,
@@ -4369,6 +4381,8 @@ async function generateCharacterDesignForNode(input: {
     name: string;
     briefMarkdown: string;
     profileJson: string | null;
+    positionX?: number | null;
+    positionY?: number | null;
   };
   style: ProjectStylePayload;
   optionsCount: number;
@@ -4421,6 +4435,10 @@ async function generateCharacterDesignForNode(input: {
     selectedCharacterDesignId: nextSelectedId || undefined,
     characterDesignPrompt: prompt,
     characterDesignGeneratedAt: new Date().toISOString(),
+    characterDesignNodePosition: {
+      x: (input.characterNode.positionX ?? 640) + 760,
+      y: input.characterNode.positionY ?? 120,
+    },
   };
 
   const updated = await prisma.characterNode.update({
@@ -4483,6 +4501,8 @@ export async function regenerateCharacterDesignOptionsForUser(input: {
       name: true,
       briefMarkdown: true,
       profileJson: true,
+      positionX: true,
+      positionY: true,
     },
   });
 
@@ -4685,6 +4705,8 @@ export async function generateCharacterDesignTool(context: ToolContext) {
       name: true,
       briefMarkdown: true,
       profileJson: true,
+      positionX: true,
+      positionY: true,
     },
   });
 

@@ -295,7 +295,14 @@ const CANVAS_GRID_STEP_Y = 220;
 const CANVAS_GRID_MAX_COLUMNS = 8;
 const CANVAS_GRID_MAX_ROWS = 200;
 
-function getGridCellKey(position: { x: number; y: number }) {
+type GridFootprint = {
+  colSpan: number;
+  rowSpan: number;
+  minCol?: number;
+  maxColExclusive?: number;
+};
+
+function getGridCell(position: { x: number; y: number }) {
   const col = Math.max(
     0,
     Math.round((position.x - CANVAS_GRID_START_X) / CANVAS_GRID_STEP_X),
@@ -305,35 +312,82 @@ function getGridCellKey(position: { x: number; y: number }) {
     Math.round((position.y - CANVAS_GRID_START_Y) / CANVAS_GRID_STEP_Y),
   );
 
+  return { col, row };
+}
+
+function getGridCellKey(col: number, row: number) {
   return `${col}:${row}`;
 }
 
-function reserveGridCell(
+function canReserveGridFootprint(
   occupiedCells: Set<string>,
   position: { x: number; y: number },
+  footprint?: Partial<GridFootprint>,
 ) {
-  const key = getGridCellKey(position);
-  if (occupiedCells.has(key)) {
-    return false;
+  const { col, row } = getGridCell(position);
+  const colSpan = Math.max(1, Math.floor(footprint?.colSpan ?? 1));
+  const rowSpan = Math.max(1, Math.floor(footprint?.rowSpan ?? 1));
+
+  for (let rowOffset = 0; rowOffset < rowSpan; rowOffset += 1) {
+    for (let colOffset = 0; colOffset < colSpan; colOffset += 1) {
+      if (occupiedCells.has(getGridCellKey(col + colOffset, row + rowOffset))) {
+        return false;
+      }
+    }
   }
 
-  occupiedCells.add(key);
   return true;
 }
 
-function allocateNextGridPosition(occupiedCells: Set<string>) {
-  for (let row = 0; row < CANVAS_GRID_MAX_ROWS; row += 1) {
-    for (let col = 0; col < CANVAS_GRID_MAX_COLUMNS; col += 1) {
-      const key = `${col}:${row}`;
-      if (occupiedCells.has(key)) {
-        continue;
-      }
+function reserveGridFootprint(
+  occupiedCells: Set<string>,
+  position: { x: number; y: number },
+  footprint?: Partial<GridFootprint>,
+) {
+  if (!canReserveGridFootprint(occupiedCells, position, footprint)) {
+    return false;
+  }
 
-      occupiedCells.add(key);
-      return {
+  const { col, row } = getGridCell(position);
+  const colSpan = Math.max(1, Math.floor(footprint?.colSpan ?? 1));
+  const rowSpan = Math.max(1, Math.floor(footprint?.rowSpan ?? 1));
+
+  for (let rowOffset = 0; rowOffset < rowSpan; rowOffset += 1) {
+    for (let colOffset = 0; colOffset < colSpan; colOffset += 1) {
+      occupiedCells.add(getGridCellKey(col + colOffset, row + rowOffset));
+    }
+  }
+
+  return true;
+}
+
+function allocateNextGridPosition(
+  occupiedCells: Set<string>,
+  footprint?: Partial<GridFootprint>,
+) {
+  const colSpan = Math.max(1, Math.floor(footprint?.colSpan ?? 1));
+  const rowSpan = Math.max(1, Math.floor(footprint?.rowSpan ?? 1));
+  const minCol = Math.max(0, Math.floor(footprint?.minCol ?? 0));
+  const maxColExclusive = Math.min(
+    CANVAS_GRID_MAX_COLUMNS,
+    Math.floor(footprint?.maxColExclusive ?? CANVAS_GRID_MAX_COLUMNS),
+  );
+  const maxStartCol = Math.max(minCol, maxColExclusive - colSpan);
+
+  for (let row = 0; row < CANVAS_GRID_MAX_ROWS; row += 1) {
+    for (let col = minCol; col <= maxStartCol; col += 1) {
+      const position = {
         x: CANVAS_GRID_START_X + col * CANVAS_GRID_STEP_X,
         y: CANVAS_GRID_START_Y + row * CANVAS_GRID_STEP_Y,
       };
+
+      if (
+        !reserveGridFootprint(occupiedCells, position, { colSpan, rowSpan })
+      ) {
+        continue;
+      }
+
+      return position;
     }
   }
 
@@ -5425,6 +5479,14 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
     const nextNodes: Node<CanvasNodeData>[] = [];
     const occupiedCells = new Set<string>();
+    const storyFootprint = { colSpan: 3, rowSpan: 3 };
+    const cardFootprint = { colSpan: 2, rowSpan: 2 };
+    const characterScanFootprint = {
+      colSpan: 2,
+      rowSpan: 2,
+      minCol: 0,
+      maxColExclusive: 6,
+    };
     const characterNodes = projectGraph.characterNodes ?? [];
     const styleNodes = projectGraph.styleNodes ?? [];
     const hasStyleIncomingConnections = styleNodes.length > 0;
@@ -5436,6 +5498,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       positionX: number | null | undefined,
       positionY: number | null | undefined,
       legacyFallback: { x: number; y: number },
+      footprint?: Partial<GridFootprint>,
     ) => {
       if (Number.isFinite(positionX) && Number.isFinite(positionY)) {
         const persisted = {
@@ -5443,16 +5506,122 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           y: positionY as number,
         };
 
-        if (reserveGridCell(occupiedCells, persisted)) {
+        if (reserveGridFootprint(occupiedCells, persisted, footprint)) {
           return persisted;
         }
       }
 
-      if (reserveGridCell(occupiedCells, legacyFallback)) {
+      if (reserveGridFootprint(occupiedCells, legacyFallback, footprint)) {
         return legacyFallback;
       }
 
-      return allocateNextGridPosition(occupiedCells);
+      return allocateNextGridPosition(occupiedCells, footprint);
+    };
+
+    const resolveCharacterDesignPairPosition = (input: {
+      characterPositionX: number | null | undefined;
+      characterPositionY: number | null | undefined;
+      persistedDesignPosition: { x: number; y: number } | null;
+      legacyCharacterFallback: { x: number; y: number };
+      forceAdjacentDesign: boolean;
+    }) => {
+      const reservePair = (
+        characterPosition: { x: number; y: number },
+        designPosition: { x: number; y: number },
+      ) => {
+        if (
+          !canReserveGridFootprint(
+            occupiedCells,
+            characterPosition,
+            cardFootprint,
+          )
+        ) {
+          return false;
+        }
+
+        if (
+          !canReserveGridFootprint(occupiedCells, designPosition, cardFootprint)
+        ) {
+          return false;
+        }
+
+        reserveGridFootprint(occupiedCells, characterPosition, cardFootprint);
+        reserveGridFootprint(occupiedCells, designPosition, cardFootprint);
+        return true;
+      };
+
+      if (
+        Number.isFinite(input.characterPositionX) &&
+        Number.isFinite(input.characterPositionY)
+      ) {
+        const persistedCharacterPosition = {
+          x: input.characterPositionX as number,
+          y: input.characterPositionY as number,
+        };
+        const designFromCharacter = {
+          x: persistedCharacterPosition.x + 760,
+          y: persistedCharacterPosition.y,
+        };
+        const persistedOrAdjacentDesign =
+          input.forceAdjacentDesign || !input.persistedDesignPosition
+            ? designFromCharacter
+            : input.persistedDesignPosition;
+
+        if (
+          reservePair(persistedCharacterPosition, persistedOrAdjacentDesign)
+        ) {
+          return {
+            characterPosition: persistedCharacterPosition,
+            designPosition: persistedOrAdjacentDesign,
+          };
+        }
+      }
+
+      const fallbackDesign = {
+        x: input.legacyCharacterFallback.x + 760,
+        y: input.legacyCharacterFallback.y,
+      };
+      if (reservePair(input.legacyCharacterFallback, fallbackDesign)) {
+        return {
+          characterPosition: input.legacyCharacterFallback,
+          designPosition: fallbackDesign,
+        };
+      }
+
+      for (let row = 0; row < CANVAS_GRID_MAX_ROWS; row += 1) {
+        for (
+          let col = characterScanFootprint.minCol;
+          col < characterScanFootprint.maxColExclusive;
+          col += 1
+        ) {
+          const characterPosition = {
+            x: CANVAS_GRID_START_X + col * CANVAS_GRID_STEP_X,
+            y: CANVAS_GRID_START_Y + row * CANVAS_GRID_STEP_Y,
+          };
+          const designPosition = {
+            x: characterPosition.x + 760,
+            y: characterPosition.y,
+          };
+
+          if (reservePair(characterPosition, designPosition)) {
+            return {
+              characterPosition,
+              designPosition,
+            };
+          }
+        }
+      }
+
+      const characterPosition = allocateNextGridPosition(
+        occupiedCells,
+        characterScanFootprint,
+      );
+      const designPosition = {
+        x: characterPosition.x + 760,
+        y: characterPosition.y,
+      };
+      reserveGridFootprint(occupiedCells, designPosition, cardFootprint);
+      return { characterPosition, designPosition };
     };
 
     if (projectGraph.story) {
@@ -5522,6 +5691,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           projectGraph.story.positionX,
           projectGraph.story.positionY,
           { x: 80, y: 120 },
+          storyFootprint,
         ),
         draggable: true,
         data: nodeData,
@@ -5537,15 +5707,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         saveState: 'idle',
         saveMessage: 'Autosave',
       };
-
-      const characterPosition = resolveNodePosition(
-        character.positionX,
-        character.positionY,
-        {
-          x: 640,
-          y: 120 + index * 440,
-        },
-      );
 
       const profile = parseCharacterProfile(character.profileJson);
       const designOptions = parseCharacterDesignOptions(profile);
@@ -5571,6 +5732,18 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
               y: profile.characterDesignNodePosition.y,
             }
           : null;
+      const forceAdjacentDesign = designOptions.length === 0;
+      const { characterPosition, designPosition } =
+        resolveCharacterDesignPairPosition({
+          characterPositionX: character.positionX,
+          characterPositionY: character.positionY,
+          persistedDesignPosition,
+          legacyCharacterFallback: {
+            x: 640,
+            y: 120 + index * 440,
+          },
+          forceAdjacentDesign,
+        });
 
       nextNodes.push({
         id: `character-${character.id}`,
@@ -5597,14 +5770,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       nextNodes.push({
         id: `character-design-${character.id}`,
         type: 'characterDesign',
-        position: resolveNodePosition(
-          persistedDesignPosition?.x,
-          persistedDesignPosition?.y,
-          {
-            x: characterPosition.x + 760,
-            y: characterPosition.y,
-          },
-        ),
+        position: designPosition,
         draggable: true,
         deletable: false,
         data: {
@@ -5647,6 +5813,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             x: 980,
             y: 120 + index * 190,
           },
+          cardFootprint,
         ),
         data: {
           styleId: styleNode.id,
@@ -5694,6 +5861,7 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             x: 1320,
             y: 120 + index * 190,
           },
+          cardFootprint,
         ),
         data: {
           storyboardId: storyboard.id,
