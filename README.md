@@ -1,103 +1,163 @@
 # Leobot
 
-Voice-controlled creative agent scaffold with:
+Leobot is a voice-controlled creative agent for building storyboard projects. You speak to it in the browser and it helps you draft stories, develop characters with AI-generated design concepts, set style guides, and produce storyboard frames — all persisted on a React Flow canvas.
 
-- Vite + React frontend
-- Hono API + WebSocket backend
-- Prisma + MongoDB
-- Better Auth + Google OAuth
-- Gemini Live API relay
-- shadcn/ui primitives
-- React Flow canvas UI
+## How it works
 
-## Architecture
+- The browser connects to the backend over WebSocket (`/ws`)
+- The backend authenticates the session, then opens a Gemini Live connection on behalf of the user
+- Voice and text input flow through the Gemini Live bridge; tool calls from the model are routed through an agent system (home agent, project agent)
+- Projects, stories, characters, style guides, and storyboard nodes are persisted in MongoDB via Prisma
 
-- Browser UI connects to backend via `/ws` (proxied by Vite in dev)
-- Hono backend authenticates session and relays realtime messages to Gemini Live
-- Gemini tool calls are routed through an agent router and project services
-- Prisma persists users, projects, story (one per project), character/style/storyboard nodes
+## Prerequisites
 
-## Quick Start
+- [Bun](https://bun.sh) v1.x
+- A MongoDB database (Atlas free tier works fine)
+- A Google Cloud project with OAuth 2.0 credentials
+- A Gemini API key (AI Studio) **or** a Vertex AI project with ADC configured
+- Optional: [Pexels](https://www.pexels.com/api/) and [Pixabay](https://pixabay.com/api/docs/) API keys for image reference search
 
-1. Install dependencies:
+## Setup
+
+### 1. Install dependencies
 
 ```bash
 bun install
 ```
 
-2. Copy env template:
+### 2. Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
-3. Configure:
+Open `.env` and fill in the following sections:
 
-- MongoDB `DATABASE_URL`
-- Better Auth `BETTER_AUTH_SECRET`
-- Google OAuth credentials
-- Gemini provider (`GEMINI_PROVIDER`) and matching credentials
+**App URLs** — leave as-is for local dev:
 
-### Gemini provider setup
-
-This project uses `@google/genai` (Google GenAI SDK) and supports both SDK-style switching and project-style switching.
-
-Set either:
-
-- `GEMINI_PROVIDER` to one of:
-  - `ai_studio`: uses `GEMINI_API_KEY`
-  - `vertex`: uses Vertex AI with ADC (`GOOGLE_CLOUD_PROJECT` + `GOOGLE_CLOUD_LOCATION`)
-- or `GOOGLE_GENAI_USE_VERTEXAI=True|False` (Google quickstart style)
-
-If both are set, `GEMINI_PROVIDER` takes precedence and must not conflict with `GOOGLE_GENAI_USE_VERTEXAI`.
-
-For Vertex AI local development, authenticate with ADC using one of:
-
-- `gcloud auth application-default login`
-- `GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json`
-
-The server validates provider-specific env vars at startup.
-
-### Debug monitoring
-
-Enable realtime debug monitoring with:
-
-- `DEBUG_MONITOR_ENABLED=true`
-- `DEBUG_MONITOR_MAX_EVENTS=2000` (bounded in-memory event history)
-
-When enabled, the server tracks websocket session lifecycle, active tool/agent calls, action send/receive events, Gemini errors, and generated response text snippets.
-
-4. Generate Prisma client and push schema:
-
-```bash
-bun run prisma:generate
-bun run prisma:push
+```
+APP_BASE_URL=http://localhost:5173
+API_BASE_URL=http://localhost:8787
 ```
 
-5. Run app:
+**Database:**
+
+```
+DATABASE_URL=mongodb+srv://<username>:<password>@<cluster>/<db>?retryWrites=true&w=majority
+```
+
+**Auth:**
+
+```
+BETTER_AUTH_SECRET=<generate a long random string, e.g. openssl rand -base64 32>
+GOOGLE_CLIENT_ID=<from Google Cloud Console>
+GOOGLE_CLIENT_SECRET=<from Google Cloud Console>
+```
+
+**Gemini — pick one provider:**
+
+Option A — Google AI Studio (simplest):
+
+```
+GEMINI_PROVIDER=ai_studio
+GEMINI_API_KEY=<your key from aistudio.google.com>
+```
+
+Option B — Vertex AI:
+
+```
+GEMINI_PROVIDER=vertex
+GOOGLE_CLOUD_PROJECT=<your GCP project ID>
+GOOGLE_CLOUD_LOCATION=us-central1
+```
+
+For local Vertex AI auth, run `gcloud auth application-default login` or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
+
+**Models** (defaults shown, override if needed):
+
+```
+GEMINI_LIVE_MODEL=gemini-live-2.5-flash-preview
+GEMINI_CHARACTER_SUBAGENT_MODEL=gemini-2.5-flash
+GEMINI_STORYBOARD_SUBAGENT_MODEL=gemini-2.5-flash
+GEMINI_STORYBOARD_IMAGE_MODEL=gemini-2.5-flash-image
+GEMINI_CHARACTER_DESIGN_IMAGE_MODEL=imagen-4.0-generate-001
+```
+
+**Optional — image reference search:**
+
+```
+PEXELS_API_KEY=<your key>
+PIXABAY_API_KEY=<your key>
+```
+
+### 3. Set up Google OAuth
+
+In [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → Credentials, create an OAuth 2.0 Client ID (Web application) with:
+
+- **Authorized JavaScript origins:** `http://localhost:5173`, `http://localhost:8787`
+- **Authorized redirect URI:** `http://localhost:8787/api/auth/callback/google`
+
+### 4. Initialize the database
+
+```bash
+bun run prisma:generate   # generate the Prisma client
+bun run prisma:push       # push the schema to MongoDB
+```
+
+### 5. Run the app
 
 ```bash
 bun run dev
 ```
 
-- Frontend: `http://localhost:5173`
-- Backend: `http://localhost:8787`
+| Service  | URL                   |
+| -------- | --------------------- |
+| Frontend | http://localhost:5173 |
+| Backend  | http://localhost:8787 |
 
-## Google OAuth setup
+To run only one side:
 
-Create OAuth credentials in Google Cloud Console and set:
+```bash
+bun run dev:web   # Vite frontend only
+bun run dev:api   # Hono API + WS only
+```
 
-- Authorized JavaScript origins: `http://localhost:5173`, `http://localhost:8787`
-- Authorized redirect URI: `http://localhost:8787/api/auth/callback/google`
+## Other commands
 
-## Current API Surface
+| Command                   | Description                 |
+| ------------------------- | --------------------------- |
+| `bun run build`           | Build frontend + type-check |
+| `bun run lint`            | Run ESLint                  |
+| `bun run prisma:generate` | Regenerate Prisma client    |
+| `bun run prisma:push`     | Sync schema to database     |
 
-- `GET /api/health`
-- `GET /api/me`
-- `GET /api/projects`
-- `POST /api/projects`
-- `GET /api/projects/:projectId`
-- `POST /api/projects/:projectId/story/import`
+## Debug monitor
+
+The server has an optional in-memory debug monitor that tracks WebSocket session lifecycle, tool calls, Gemini events, and errors.
+
+Enable it in `.env`:
+
+```
+DEBUG_MONITOR_ENABLED=true
+DEBUG_MONITOR_MAX_EVENTS=2000
+```
+
+When enabled, the debug dashboard is available in the frontend.
+
+## API reference
+
+| Method | Path                             | Description             |
+| ------ | -------------------------------- | ----------------------- |
+| `GET`  | `/api/health`                    | Health check            |
+| `GET`  | `/api/me`                        | Authenticated user info |
+| `GET`  | `/api/projects`                  | List user's projects    |
+| `POST` | `/api/projects`                  | Create a project        |
+| `GET`  | `/api/projects/:id`              | Get project with nodes  |
+| `POST` | `/api/projects/:id/story/import` | Import a story document |
+| `WS`   | `/ws`                            | Gemini Live bridge      |
+
+Auth endpoints are handled by Better Auth under `/api/auth/*` (sign-in, sign-out, session, OAuth callback).
+
 - `GET /api/debug/monitor`
 - `GET /api/debug/monitor/events?limit=100`
 - `WS /ws`
