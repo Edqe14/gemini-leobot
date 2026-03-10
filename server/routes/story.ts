@@ -12,7 +12,7 @@ import {
 
 const importSchema = z.object({
   sourceUrl: z.string().url().optional(),
-  markdown: z.string().min(1).optional(),
+  markdown: z.string().optional(),
   title: z.string().min(1).max(160).optional(),
 });
 
@@ -49,11 +49,15 @@ storyRouter.post('/api/projects/:projectId/story/import', async (c) => {
 
   const body = await c.req.json();
   const parsed = importSchema.parse(body);
+  const hasMarkdownField = Object.prototype.hasOwnProperty.call(
+    parsed,
+    'markdown',
+  );
   const sourceUrl = parsed.sourceUrl?.trim();
   const markdownInput = parsed.markdown?.trim();
   const titleInput = parsed.title?.trim();
 
-  if (!sourceUrl && !markdownInput) {
+  if (!sourceUrl && !hasMarkdownField) {
     return c.json({ error: 'Provide either "sourceUrl" or "markdown".' }, 400);
   }
 

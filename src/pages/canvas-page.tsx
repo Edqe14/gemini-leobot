@@ -63,6 +63,7 @@ type CaptionLine = {
 };
 
 const MIC_PROCESSOR_BUFFER_SIZE = 1024;
+const BARGE_IN_RMS_THRESHOLD = 0.02;
 
 type StoryRevisionRecord = {
   id: string;
@@ -505,6 +506,7 @@ const CONTEXT_SWITCH_RETRY_MS = 320;
 const CONTEXT_SWITCH_TIMEOUT_MS = 8000;
 const CONTEXT_SWITCH_HARD_TIMEOUT_MS = 12000;
 const CONTEXT_SWITCH_SIGNAL_EXTENSION_MS = 4000;
+const PLAYBACK_INTERRUPT_SUPPRESSION_MS = 900;
 
 type HandleSide = 'top' | 'right' | 'bottom' | 'left';
 
@@ -637,6 +639,17 @@ function getSelectionOffsetsWithin(element: HTMLElement) {
 function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
   const nodeData = data;
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const syncEditorState = useCallback(
+    (element: HTMLElement) => {
+      nodeData.onMarkdownChange(readEditablePlainText(element));
+
+      const nextSelection = getSelectionOffsetsWithin(element);
+      if (nextSelection) {
+        nodeData.onSelectionChange(nextSelection.start, nextSelection.end);
+      }
+    },
+    [nodeData],
+  );
   const pendingSelection = getHighlightedStorySegments({
     text: nodeData.markdownInput,
     start: nodeData.pendingProposal?.selectionStart,
@@ -733,19 +746,7 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
                   role='textbox'
                   aria-multiline='true'
                   onInput={(event) => {
-                    nodeData.onMarkdownChange(
-                      readEditablePlainText(event.currentTarget),
-                    );
-
-                    const nextSelection = getSelectionOffsetsWithin(
-                      event.currentTarget,
-                    );
-                    if (nextSelection) {
-                      nodeData.onSelectionChange(
-                        nextSelection.start,
-                        nextSelection.end,
-                      );
-                    }
+                    syncEditorState(event.currentTarget);
                   }}
                   onKeyUp={(event) => {
                     const nextSelection = getSelectionOffsetsWithin(
@@ -782,6 +783,32 @@ function StoryImportNodeComponent({ data }: NodeProps<StoryImportCanvasNode>) {
                       .getRangeAt(0)
                       .insertNode(document.createTextNode(text));
                     selection.collapseToEnd();
+
+                    syncEditorState(event.currentTarget);
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const text = event.dataTransfer.getData('text/plain');
+                    if (!text) {
+                      return;
+                    }
+
+                    const selection = window.getSelection();
+                    if (!selection || selection.rangeCount === 0) {
+                      return;
+                    }
+
+                    selection.deleteFromDocument();
+                    selection
+                      .getRangeAt(0)
+                      .insertNode(document.createTextNode(text));
+                    selection.collapseToEnd();
+
+                    syncEditorState(event.currentTarget);
+                  }}
+                  onBlur={(event) => {
+                    // Force a final sync in case browser edits bypass input events.
+                    syncEditorState(event.currentTarget);
                   }}
                   className='nodrag nowheel nopan h-120 w-full cursor-text overflow-y-auto rounded-xl border-2 border-black bg-[#FDFBF5] px-4 py-3 font-mono text-sm leading-7 whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-[#FFE234]'>
                   {nodeData.pendingProposal ? (
@@ -2402,6 +2429,8 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
   const playbackContextRef = useRef<AudioContext | null>(null);
   const playbackCursorRef = useRef(0);
   const playbackSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const playbackGenerationRef = useRef(0);
+  const suppressAssistantAudioUntilRef = useRef(0);
   const interruptedBadgeTimerRef = useRef<number | null>(null);
   const captionClearTimerRef = useRef<number | null>(null);
   const pendingContextSwitchRef = useRef<PendingContextSwitch | null>(null);
@@ -2484,6 +2513,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
     if (activeSources.size > 0) {
       didInterrupt = true;
+      playbackGenerationRef.current += 1;
+      suppressAssistantAudioUntilRef.current =
+        Date.now() + PLAYBACK_INTERRUPT_SUPPRESSION_MS;
+
       for (const source of activeSources) {
         try {
           source.stop();
@@ -2497,7 +2530,9 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
 
     const playbackContext = playbackContextRef.current;
     if (playbackContext) {
-      playbackCursorRef.current = playbackContext.currentTime;
+      void playbackContext.close();
+      playbackContextRef.current = null;
+      playbackCursorRef.current = 0;
     }
 
     return didInterrupt;
@@ -3384,6 +3419,10 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
           }
 
           const chunks = extractAudioChunks(payload);
+          if (Date.now() < suppressAssistantAudioUntilRef.current) {
+            return;
+          }
+
           const pendingContextSwitch = pendingContextSwitchRef.current;
           if (
             pendingContextSwitch &&
@@ -3425,7 +3464,16 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             void playbackContext.resume();
           }
 
+          const activePlaybackGeneration = playbackGenerationRef.current;
+
           for (const chunk of chunks) {
+            if (
+              activePlaybackGeneration !== playbackGenerationRef.current ||
+              Date.now() < suppressAssistantAudioUntilRef.current
+            ) {
+              break;
+            }
+
             if (!chunk.mimeType.toLowerCase().startsWith('audio/pcm')) {
               continue;
             }
@@ -3487,6 +3535,8 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       void playbackContextRef.current?.close();
       playbackContextRef.current = null;
       playbackCursorRef.current = 0;
+      playbackGenerationRef.current += 1;
+      suppressAssistantAudioUntilRef.current = 0;
 
       if (interruptedBadgeTimerRef.current) {
         window.clearTimeout(interruptedBadgeTimerRef.current);
@@ -3692,6 +3742,22 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
             return;
           }
 
+          // Client-side barge-in: immediately stop agent audio when user speaks.
+          if (playbackSourcesRef.current.size > 0) {
+            let sumSquares = 0;
+            for (let i = 0; i < channelData.length; i++) {
+              sumSquares += channelData[i] * channelData[i];
+            }
+            const rms = Math.sqrt(sumSquares / channelData.length);
+            if (rms > BARGE_IN_RMS_THRESHOLD) {
+              const didInterrupt = interruptPlayback();
+              if (didInterrupt) {
+                notifyInterrupted();
+                flushPendingContextSwitch();
+              }
+            }
+          }
+
           const downsampled = downsampleTo16k(
             channelData,
             audioContext.sampleRate,
@@ -3722,7 +3788,15 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
         micStartingRef.current = false;
       }
     },
-    [connected, loopbackEnabled, socketReady, stopMicCapture],
+    [
+      connected,
+      flushPendingContextSwitch,
+      interruptPlayback,
+      loopbackEnabled,
+      notifyInterrupted,
+      socketReady,
+      stopMicCapture,
+    ],
   );
 
   useEffect(() => {
@@ -4076,11 +4150,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       const markdown = storyMarkdownInput.trim();
       const sourceUrl = storyGoogleDocUrl.trim();
 
-      if (mode === 'markdown' && !markdown) {
-        setStoryImportError('Paste markdown content before saving.');
-        return;
-      }
-
       if (mode === 'google_docs' && !sourceUrl) {
         setStoryImportError('Paste a Google Docs URL before fetching story.');
         return;
@@ -4365,7 +4434,6 @@ function CreativeAgentCanvas({ userName }: { userName: string }) {
       !projectId ||
       storyImportMode !== 'markdown' ||
       storyImportBusy ||
-      !markdown ||
       markdown === lastSavedStoryMarkdownRef.current
     ) {
       return;
